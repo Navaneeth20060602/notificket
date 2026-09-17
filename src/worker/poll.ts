@@ -26,13 +26,36 @@ async function discoverBookMyShowUrl(title: string) {
     if (!response.ok) return null;
     const urls = extractUrls(await response.json());
     const slug = normalizeName(title).replace(/\s+/g, "-");
-    return urls.find((url) => normalizeName(url).includes(slug)) || urls[0] || null;
+    const titleMatches = urls.filter((url) => normalizeName(url).includes(slug));
+    // Search engines often return BookMyShow's /multimedia page before the
+    // booking page. Prefer a result that is already a ticket page, then a
+    // result carrying the movie's ET code (which can be made canonical below).
+    const ranked = [...titleMatches, ...urls].sort((left, right) => {
+      const score = (url: string) => (/\/buytickets\//i.test(url) ? 3 : /ET\d{5,}/i.test(url) ? 2 : 1);
+      return score(right) - score(left);
+    });
+    return ranked[0] || null;
   } catch { return null; } finally { clearTimeout(timeout); }
 }
 
 function dateFromUrl(url: string) {
   const compact = new URL(url).pathname.match(/\/(20\d{6})(?:\/|$)/)?.[1];
   return compact ? `${compact.slice(0, 4)}-${compact.slice(4, 6)}-${compact.slice(6, 8)}` : null;
+}
+
+function todayInKolkataCompact() {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
+  const value = (kind: string) => parts.find((part) => part.type === kind)?.value || "";
+  return `${value("year")}${value("month")}${value("day")}`;
+}
+
+function canonicalTicketUrl(sourceUrl: string, title: string) {
+  if (/\/buytickets\//i.test(sourceUrl)) return sourceUrl;
+  const code = sourceUrl.match(/\bET\d{5,}\b/i)?.[0]?.toUpperCase();
+  if (!code) return sourceUrl;
+  const pathSlug = sourceUrl.match(/\/movies\/hyderabad\/([^/?]+)\/ET\d{5,}/i)?.[1];
+  const slug = pathSlug || normalizeName(title).replace(/\s+/g, "-");
+  return `https://in.bookmyshow.com/movies/hyderabad/${slug}/buytickets/${code}/${todayInKolkataCompact()}?etCodes=${code}`;
 }
 
 function dateFromLabel(label: string) {
@@ -61,6 +84,11 @@ async function scanTicketPage(sourceUrl: string): Promise<ScanResult> {
   const browser = await chromium.launch({ executablePath: process.env.BROWSER_EXECUTABLE_PATH || "/usr/bin/chromium", headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage"] });
   try {
     const page = await browser.newPage({ locale: "en-IN", timezoneId: "Asia/Kolkata" });
+    // Establish an ordinary Hyderabad browsing context before opening the
+    // booking URL. This is navigation, not a bypass of a challenge or access
+    // control, and lets BookMyShow apply the city normally.
+    await page.goto("https://in.bookmyshow.com/explore/home/hyderabad", { waitUntil: "domcontentloaded", timeout: 30_000 }).catch(() => undefined);
+    await page.waitForTimeout(500);
     await page.goto(sourceUrl, { waitUntil: "domcontentloaded", timeout: 45_000 });
     await page.waitForTimeout(2_000);
     const pageText = ((await page.title()) + " " + (await page.locator("body").innerText().catch(() => "")).slice(0, 600)).toLowerCase();
@@ -177,12 +205,13 @@ export async function pollAllTrackedMovies() {
   let added = 0;
   for (const job of jobs) {
     try {
-      const sourceUrl = job.sourceUrl || await discoverBookMyShowUrl(job.movie.title);
-      if (!sourceUrl) {
+      const discoveredUrl = job.sourceUrl || await discoverBookMyShowUrl(job.movie.title);
+      if (!discoveredUrl) {
         console.warn(`[monitor] ${job.movie.title}: no matching Hyderabad ticket page found.`);
         await prisma.monitorJob.update({ where: { id: job.id }, data: { lastCheckedAt: new Date(), nextCheckAt: nextCheck(180), failureCount: { increment: 1 }, lastMessage: "No matching Hyderabad ticket page found; will search again later." } });
         continue;
       }
+      const sourceUrl = canonicalTicketUrl(discoveredUrl, job.movie.title);
       const scan = await scanTicketPage(sourceUrl);
       const newlyAdded = await saveShowtimes(job, scan.showtimes); added += newlyAdded;
       console.log(`[monitor] ${job.movie.title}: bookingPage=${scan.looksLikeBookingPage} visibleTimes=${scan.visibleTimeCount} scanned=${scan.showtimes.length} added=${newlyAdded} url=${scan.finalUrl}`);
