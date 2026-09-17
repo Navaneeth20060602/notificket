@@ -49,7 +49,14 @@ function dateFromLabel(label: string) {
   return `${year}-${String(month + 1).padStart(2, "0")}-${String(match[1]).padStart(2, "0")}`;
 }
 
-async function scanTicketPage(sourceUrl: string) {
+type ScanResult = {
+  showtimes: VisibleShowtime[];
+  finalUrl: string;
+  visibleTimeCount: number;
+  looksLikeBookingPage: boolean;
+};
+
+async function scanTicketPage(sourceUrl: string): Promise<ScanResult> {
   // Normal Chromium only: no CAPTCHA solving, proxy rotation, or site-control bypass.
   const browser = await chromium.launch({ executablePath: process.env.BROWSER_EXECUTABLE_PATH || "/usr/bin/chromium", headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage"] });
   try {
@@ -64,6 +71,7 @@ async function scanTicketPage(sourceUrl: string) {
       .filter(({ label, visible }) => visible && label.length <= 36 && /\b(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\w*\b/i.test(label) && /\b\d{1,2}\b/.test(label)));
     const dates = controls.length ? controls.slice(0, 14) : [{ index: -1, label: "current" }];
     const shows: VisibleShowtime[] = [];
+    let visibleTimeCount = 0;
 
     for (const control of dates) {
       if (control.index >= 0) {
@@ -77,24 +85,49 @@ async function scanTicketPage(sourceUrl: string) {
         const timeOne = /\b(?:(?:1[0-2]|0?[1-9]):[0-5]\d\s?(?:AM|PM)|(?:[01]?\d|2[0-3]):[0-5]\d)\b/i;
         const venueHint = /(cinema|theatre|theater|multiplex|pvr|inox|cinepolis|screens?|70mm|a\/c|dts|:)/i;
         const output: { theatreName: string; time: string }[] = [];
+        const allTimes = new Set<string>();
+
+        // BookMyShow does not always put a newline between the cinema name and
+        // its time buttons.  In that case the older parser discarded the whole
+        // row because it contained a time.  Use the text before the first time
+        // as a fallback venue name, while preferring an actual separate line.
+        const venueFromContainer = (container: HTMLElement) => {
+          const raw = (container.innerText || container.textContent || "").replace(/\u00a0/g, " ").trim();
+          const lines = raw.split("\n").map((line) => line.replace(/\s+/g, " ").trim()).filter(Boolean);
+          const separateLine = lines.find((line) => !timeOne.test(line) && line.length >= 4 && line.length <= 140 && venueHint.test(line));
+          if (separateLine) return separateLine;
+          const firstTime = raw.search(timeOne);
+          if (firstTime <= 3) return "";
+          const prefix = raw.slice(0, firstTime).replace(/\s+/g, " ").trim();
+          // Discard obvious page/filter labels, but do not require a particular
+          // cinema chain: independent Hyderabad theatres are valid too.
+          if (prefix.length < 4 || prefix.length > 160 || /^(movies|price range|language|format|date|showtimes?)$/i.test(prefix)) return "";
+          return prefix;
+        };
         for (const node of body.querySelectorAll("button, a, [role='button'], div, span")) {
           if (!(node instanceof HTMLElement) || node.offsetParent === null) continue;
           const own = (node.innerText || node.textContent || "").replace(/\s+/g, " ").trim();
-          if (!timeOne.test(own) || own.length > 90) continue;
+          if (!timeOne.test(own) || own.length > 150) continue;
+          for (const time of own.match(timeGlobal) || []) allTimes.add(time.toUpperCase().replace(/\s/g, ""));
           let venue = "";
           for (let parent: HTMLElement | null = node; parent && parent !== body; parent = parent.parentElement) {
-            const lines = (parent.innerText || "").split("\n").map((line) => line.replace(/\s+/g, " ").trim()).filter(Boolean);
-            venue = lines.find((line) => !timeOne.test(line) && line.length >= 4 && line.length <= 140 && venueHint.test(line)) || "";
+            venue = venueFromContainer(parent);
             if (venue) break;
           }
           for (const time of own.match(timeGlobal) || []) if (venue) output.push({ theatreName: venue, time: time.toUpperCase().replace(/\s/g, "") });
         }
-        return output;
+        return { output, visibleTimeCount: allTimes.size };
       });
-      shows.push(...found.map((item) => ({ ...item, date, format: "2D" })));
+      visibleTimeCount = Math.max(visibleTimeCount, found.visibleTimeCount);
+      shows.push(...found.output.map((item) => ({ ...item, date, format: "2D" })));
     }
     const deduped = new Map(shows.map((show) => [`${normalizeName(show.theatreName)}|${show.date}|${show.time}`, show]));
-    return [...deduped.values()].slice(0, 250);
+    return {
+      showtimes: [...deduped.values()].slice(0, 250),
+      finalUrl: page.url(),
+      visibleTimeCount,
+      looksLikeBookingPage: /\/buytickets\//i.test(page.url()),
+    };
   } finally { await browser.close(); }
 }
 
@@ -150,10 +183,13 @@ export async function pollAllTrackedMovies() {
         await prisma.monitorJob.update({ where: { id: job.id }, data: { lastCheckedAt: new Date(), nextCheckAt: nextCheck(180), failureCount: { increment: 1 }, lastMessage: "No matching Hyderabad ticket page found; will search again later." } });
         continue;
       }
-      const showtimes = await scanTicketPage(sourceUrl);
-      const newlyAdded = await saveShowtimes(job, showtimes); added += newlyAdded;
-      console.log(`[monitor] ${job.movie.title}: source found, scanned=${showtimes.length}, added=${newlyAdded}`);
-      await prisma.monitorJob.update({ where: { id: job.id }, data: { sourceUrl, lastCheckedAt: new Date(), nextCheckAt: nextCheck(), failureCount: 0, lastMessage: `${showtimes.length} visible showtimes scanned; ${newlyAdded} new entries added.` } });
+      const scan = await scanTicketPage(sourceUrl);
+      const newlyAdded = await saveShowtimes(job, scan.showtimes); added += newlyAdded;
+      console.log(`[monitor] ${job.movie.title}: bookingPage=${scan.looksLikeBookingPage} visibleTimes=${scan.visibleTimeCount} scanned=${scan.showtimes.length} added=${newlyAdded} url=${scan.finalUrl}`);
+      const noRowsMessage = scan.visibleTimeCount === 0
+        ? "The discovered page had no visible showtime buttons; it will be rediscovered next cycle."
+        : "Showtime buttons were visible but no theatre rows could be identified; will retry.";
+      await prisma.monitorJob.update({ where: { id: job.id }, data: { sourceUrl: scan.showtimes.length ? sourceUrl : null, lastCheckedAt: new Date(), nextCheckAt: nextCheck(), failureCount: 0, lastMessage: scan.showtimes.length ? `${scan.showtimes.length} visible showtimes scanned; ${newlyAdded} new entries added.` : noRowsMessage } });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unexpected monitor failure.";
       console.warn(`[monitor] ${job.movie.title}: ${message}`);
