@@ -185,7 +185,9 @@ export default function MovieDetailPage() {
               ) : (
                 <div className="relative mt-1">
                   <button type="button" className="input text-left flex items-center justify-between" onClick={() => setTheatreMenuOpen(!theatreMenuOpen)} aria-expanded={theatreMenuOpen}>
-                    <span className={selectedTheatreNames.length ? "" : "text-muted"}>{selectedTheatreNames.length ? `${selectedTheatreNames.length} theatre${selectedTheatreNames.length === 1 ? "" : "s"} selected` : "Search and select theatres"}</span>
+                    <span className={selectedTheatreNames.length ? "truncate pr-3" : "text-muted"} title={selectedTheatreNames.join(", ")}>
+                      {selectedTheatreNames.length ? selectedTheatreNames.join(", ") : "Search and select theatres"}
+                    </span>
                     <span className="text-muted">⌄</span>
                   </button>
                   {theatreMenuOpen && <div className="absolute z-20 mt-2 w-full card p-2 shadow-2xl">
@@ -219,6 +221,8 @@ export default function MovieDetailPage() {
                 min={todayInputDate()}
                 max={maxFutureInputDate()}
                 onChange={(e) => setDate(e.target.value)}
+                onClick={(e) => e.currentTarget.showPicker?.()}
+                onFocus={(e) => e.currentTarget.showPicker?.()}
                 required
               />
             </div>
