@@ -1,24 +1,8 @@
 import { PrismaClient } from "@prisma/client";
-import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
 async function main() {
-  // --- Demo account (so you have something to log in with immediately) ---
-  // Since it's the FIRST user ever created, the app's own rule makes it ADMIN.
-  const existingDemo = await prisma.user.findUnique({ where: { email: "admin@example.com" } });
-  if (!existingDemo) {
-    await prisma.user.create({
-      data: {
-        name: "Demo Admin",
-        email: "admin@example.com",
-        passwordHash: await bcrypt.hash("password123", 10),
-        role: "ADMIN",
-      },
-    });
-    console.log("Created demo admin login -> admin@example.com / password123");
-  }
-
   // --- Locations ---
   const cityNames = ["Hyderabad", "Bengaluru", "Chennai", "Mumbai"];
   const locations: Record<string, string> = {};
