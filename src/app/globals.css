@@ -1,0 +1,106 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---- Theme variables --------------------------------------------------
+   Dark is the default (no class needed on <html>). Adding class="light"
+   to <html> (done by ThemeProvider) switches every variable below. Every
+   component uses these variables via the utility classes further down,
+   instead of hardcoded colors, so the whole app reacts to the toggle. */
+:root {
+  --bg: #0b0b10;
+  --bg-elevated: #131219;
+  --card: #16151d;
+  --border: #262530;
+  --text: #f4f2f7;
+  --text-muted: #9d9aa8;
+  --text-faint: #706d7a;
+  --input-bg: #101018;
+}
+
+:root.light {
+  --bg: #faf9fc;
+  --bg-elevated: #ffffff;
+  --card: #ffffff;
+  --border: #e6e3ec;
+  --text: #1a1825;
+  --text-muted: #6b6878;
+  --text-faint: #9995a3;
+  --input-bg: #ffffff;
+}
+
+* {
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.bg-page { background: var(--bg); }
+.bg-surface { background: var(--bg-elevated); }
+.text-muted { color: var(--text-muted); }
+.text-faint { color: var(--text-faint); }
+.border-subtle { border-color: var(--border); }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #d946ef, #a21caf);
+  color: white;
+  border-radius: 10px;
+  padding: 0.6rem 1.1rem;
+  font-weight: 600;
+  transition: opacity 0.15s, transform 0.15s;
+}
+.btn-primary:hover { opacity: 0.92; transform: translateY(-1px); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+.btn-secondary {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 0.6rem 1.1rem;
+  font-weight: 500;
+}
+.btn-secondary:hover { border-color: #d946ef; color: #d946ef; }
+
+.input {
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.55rem 0.8rem;
+  color: var(--text);
+  width: 100%;
+}
+.input:focus { outline: none; border-color: #d946ef; }
+
+/* ---- Quote wall (landing page) ---------------------------------------
+   Each column scrolls its own list of quote cards upward forever via a
+   CSS keyframe on a doubled list (so it loops seamlessly). Columns use
+   different durations/directions so they don't move in visual lockstep -
+   that's the "left Telugu, right Hindi, staggered" effect. */
+@keyframes scroll-up {
+  from { transform: translateY(0); }
+  to { transform: translateY(-50%); }
+}
+@keyframes scroll-down {
+  from { transform: translateY(-50%); }
+  to { transform: translateY(0); }
+}
+.quote-col-up { animation: scroll-up linear infinite; }
+.quote-col-down { animation: scroll-down linear infinite; }
+.quote-col-up:hover, .quote-col-down:hover { animation-play-state: paused; }
+
+.brand-gradient-text {
+  background: linear-gradient(135deg, #d946ef, #f472b6, #a78bfa);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}

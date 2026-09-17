@@ -1,0 +1,165 @@
+// Prisma schema - this file defines every table in the database.
+// Using SQLite so the app runs with zero setup. Can switch to Postgres
+// later by changing "provider" below to "postgresql" and updating DATABASE_URL.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String    @id @default(cuid())
+  name         String
+  email        String    @unique
+  passwordHash String
+  role         String    @default("USER") // "USER" | "ADMIN" - plain string because SQLite doesn't support enums
+  city         String?
+  createdAt    DateTime  @default(now())
+  requests     Request[]
+  notifications Notification[]
+  passwordResetOtps PasswordResetOtp[]
+  feedback     Feedback[]
+}
+
+// A city / area the app supports. Admin-managed.
+model Location {
+  id        String    @id @default(cuid())
+  name      String    @unique // e.g. "Hyderabad"
+  theatres  Theatre[]
+  requests  Request[]
+  createdAt DateTime  @default(now())
+}
+
+model Theatre {
+  id         String     @id @default(cuid())
+  name       String
+  location   Location   @relation(fields: [locationId], references: [id])
+  locationId String
+  showtimes  Showtime[]
+  requests   Request[]
+  createdAt  DateTime   @default(now())
+
+  @@unique([name, locationId]) // same theatre name can exist in different cities
+}
+
+// e.g. 2D, 3D, IMAX, 4DX
+model Format {
+  id        String     @id @default(cuid())
+  name      String     @unique
+  showtimes Showtime[]
+  requests  Request[]
+}
+
+model Movie {
+  id          String       @id @default(cuid())
+  tmdbId      Int?         @unique // stable external ID for automatic catalogue updates
+  title       String
+  language    String // Telugu, Hindi, English, Tamil, Kannada, Malayalam, Marathi, Bengali...
+  status      String       @default("UPCOMING") // "RUNNING" | "UPCOMING"
+  releaseDate DateTime?
+  posterUrl   String?
+  createdAt   DateTime     @default(now())
+  showtimes   Showtime[]
+  requests    Request[]
+
+  @@unique([title, language])
+}
+
+// A single bookable show: a movie, at a theatre, on a date/time, in a format.
+// Rows here represent "tickets that are actually on sale".
+model Showtime {
+  id             String   @id @default(cuid())
+  movie          Movie    @relation(fields: [movieId], references: [id])
+  movieId        String
+  theatre        Theatre  @relation(fields: [theatreId], references: [id])
+  theatreId      String
+  format         Format   @relation(fields: [formatId], references: [id])
+  formatId       String
+  date           DateTime
+  time           String // stored as "HH:MM", 24h
+  price          Float?
+  seatsAvailable Int?
+  createdAt      DateTime @default(now())
+
+  notifications Notification[]
+
+  @@unique([movieId, theatreId, formatId, date, time])
+}
+
+// A user's saved alert preference for an upcoming movie (or a saved filter
+// for browsing). This is what the matching engine checks new Showtimes against.
+model Request {
+  id         String        @id @default(cuid())
+  user       User          @relation(fields: [userId], references: [id])
+  userId     String
+  movie      Movie         @relation(fields: [movieId], references: [id])
+  movieId    String
+  location   Location?     @relation(fields: [locationId], references: [id])
+  locationId String?
+  theatre    Theatre?      @relation(fields: [theatreId], references: [id])
+  theatreId  String?
+  format     Format?       @relation(fields: [formatId], references: [id])
+  formatId   String?
+
+  date      DateTime? // exact desired date - leave blank to match any date
+  timeFrom  String? // "HH:MM" - lower bound of desired time range
+  timeTo    String? // "HH:MM" - upper bound of desired time range
+  maxPrice  Float?
+  // JSON arrays keep a request flexible while SQLite remains deployment-simple.
+  theatreIds String @default("[]")
+  formatIds  String @default("[]")
+  languages  String @default("[]")
+
+  status    String        @default("ACTIVE") // "ACTIVE" | "COMPLETED" | "CANCELLED"
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  notifications Notification[]
+}
+
+model PasswordResetOtp {
+  id        String   @id @default(cuid())
+  user      User     @relation(fields: [userId], references: [id])
+  userId    String
+  codeHash  String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+}
+
+model Feedback {
+  id        String   @id @default(cuid())
+  user      User     @relation(fields: [userId], references: [id])
+  userId    String
+  message   String
+  createdAt DateTime @default(now())
+}
+
+// A generated alert - one row per match found. Powers the "Notifications"
+// bell/page and is where email-sending hooks in.
+model Notification {
+  id         String    @id @default(cuid())
+  user       User      @relation(fields: [userId], references: [id])
+  userId     String
+  request    Request   @relation(fields: [requestId], references: [id])
+  requestId  String
+  showtime   Showtime  @relation(fields: [showtimeId], references: [id])
+  showtimeId String
+  message    String
+  read       Boolean   @default(false)
+  emailSent  Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+}
+
+// Rotating quotes shown on the landing page
+model Quote {
+  id       String @id @default(cuid())
+  text     String
+  movie    String
+  language String
+  imageUrl String?
+}

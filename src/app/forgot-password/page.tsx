@@ -1,0 +1,11 @@
+"use client";
+import { useState } from "react";
+import Link from "next/link";
+import Navbar from "@/components/Navbar";
+
+export default function ForgotPasswordPage() {
+  const [email, setEmail] = useState(""); const [code, setCode] = useState(""); const [password, setPassword] = useState(""); const [sent, setSent] = useState(false); const [message, setMessage] = useState(""); const [loading, setLoading] = useState(false);
+  async function requestCode(e: React.FormEvent) { e.preventDefault(); setLoading(true); const r = await fetch("/api/auth/password-reset/request", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email }) }); setLoading(false); if (r.ok) { setSent(true); setMessage("If that account exists, a six-digit code has been sent."); } }
+  async function reset(e: React.FormEvent) { e.preventDefault(); setLoading(true); const r = await fetch("/api/auth/password-reset/verify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, code, password }) }); const d = await r.json(); setLoading(false); setMessage(r.ok ? "Password updated. You can now log in." : d.error); }
+  return <main className="min-h-screen bg-page"><Navbar /><div className="min-h-[calc(100vh-73px)] flex items-center justify-center px-4"><form onSubmit={sent ? reset : requestCode} className="card p-8 w-full max-w-sm space-y-4"><h1 className="text-xl font-semibold">Reset your password</h1><p className="text-sm text-muted">We&apos;ll verify your email with a one-time code.</p><input type="email" className="input" placeholder="Email address" value={email} onChange={(e) => setEmail(e.target.value)} required disabled={sent} />{sent && <><input className="input" inputMode="numeric" placeholder="Six-digit code" value={code} onChange={(e) => setCode(e.target.value)} required /><input type="password" className="input" placeholder="New password" minLength={6} value={password} onChange={(e) => setPassword(e.target.value)} required /></>}<button className="btn-primary w-full" disabled={loading}>{loading ? "Please wait..." : sent ? "Set new password" : "Send OTP"}</button>{message && <p className="text-sm text-muted">{message}</p>}<p className="text-center text-sm"><Link href="/login" className="text-brand-400">Back to log in</Link></p></form></div></main>;
+}

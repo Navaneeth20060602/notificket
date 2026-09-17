@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Notificket Showtime Capture",
+  "version": "0.2.0",
+  "description": "Saves visible showtimes to Notificket and can monitor an open ticketing page for new entries.",
+  "permissions": ["activeTab", "storage", "tabs", "alarms"],
+  "host_permissions": ["http://localhost:3000/*", "https://in.bookmyshow.com/*", "https://www.district.in/*"],
+  "action": { "default_popup": "popup.html", "default_title": "Capture showtimes for Notificket" },
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [{ "matches": ["https://in.bookmyshow.com/*", "https://www.district.in/*"], "js": ["content.js"] }]
+}

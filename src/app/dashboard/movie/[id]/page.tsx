@@ -1,0 +1,252 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import Navbar from "@/components/Navbar";
+import { formatDate, toInputDate, todayInputDate, maxFutureInputDate } from "@/lib/date";
+
+export default function MovieDetailPage() {
+  const params = useParams();
+  const router = useRouter();
+  const movieId = params.id as string;
+
+  const [user, setUser] = useState<any>(null);
+  const [movie, setMovie] = useState<any>(null);
+  const [locations, setLocations] = useState<any[]>([]);
+  const [theatres, setTheatres] = useState<any[]>([]);
+  const [formats, setFormats] = useState<any[]>([]);
+  const [showtimeDate, setShowtimeDate] = useState("");
+  const [showtimeTheatreSearch, setShowtimeTheatreSearch] = useState("");
+
+  // request form state
+  const [locationId, setLocationId] = useState("");
+  const [theatreIds, setTheatreIds] = useState<string[]>([]);
+  const [theatreSearch, setTheatreSearch] = useState("");
+  const [theatreMenuOpen, setTheatreMenuOpen] = useState(false);
+  const [formatIds, setFormatIds] = useState<string[]>([]);
+  const [languages, setLanguages] = useState<string[]>([]);
+  const [date, setDate] = useState("");
+  const [timeFrom, setTimeFrom] = useState("");
+  const [timeTo, setTimeTo] = useState("");
+  const [maxPrice, setMaxPrice] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    fetch("/api/auth/me").then((r) => r.json()).then((d) => {
+      if (!d.user) router.replace("/login");
+      else setUser(d.user);
+    });
+    fetch(`/api/movies/${movieId}`).then((r) => r.json()).then((d) => { setMovie(d.movie); if (d.movie?.language) setLanguages([d.movie.language]); });
+    fetch("/api/locations").then((r) => r.json()).then((d) => setLocations(d.locations || []));
+    fetch("/api/formats").then((r) => r.json()).then((d) => setFormats(d.formats || []));
+  }, [movieId, router]);
+
+  useEffect(() => {
+    if (!locationId) {
+      setTheatres([]);
+      setTheatreMenuOpen(false);
+      return;
+    }
+    fetch(`/api/theatres?locationId=${locationId}`).then((r) => r.json()).then((d) => setTheatres(d.theatres || []));
+  }, [locationId]);
+
+  useEffect(() => {
+    const firstDate = movie?.showtimes?.map((showtime: any) => toInputDate(showtime.date)).sort()[0];
+    if (firstDate && !movie.showtimes.some((showtime: any) => toInputDate(showtime.date) === showtimeDate)) {
+      setShowtimeDate(firstDate);
+    }
+  }, [movie, showtimeDate]);
+
+  function toggle(values: string[], value: string, setValues: (values: string[]) => void) {
+    setValues(values.includes(value) ? values.filter((item) => item !== value) : [...values, value]);
+  }
+
+  async function submitRequest(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    setSubmitting(true);
+    const res = await fetch("/api/requests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        movieId,
+        locationId,
+        theatreIds,
+        formatIds,
+        languages,
+        date,
+        timeFrom: timeFrom || null,
+        timeTo: timeTo || null,
+        maxPrice: maxPrice ? Number(maxPrice) : null,
+      }),
+    });
+    setSubmitting(false);
+    if (!res.ok) {
+      const d = await res.json();
+      setError(d.error || "Something went wrong");
+      return;
+    }
+    setSubmitted(true);
+  }
+
+  if (!user || !movie) return null;
+  const filteredTheatres = theatres.filter((theatre) => theatre.name.toLowerCase().includes(theatreSearch.toLowerCase()));
+  const selectedTheatreNames = theatres.filter((theatre) => theatreIds.includes(theatre.id)).map((theatre) => theatre.name);
+  const showtimeDates: string[] = Array.from(new Set<string>((movie.showtimes || []).map((showtime: any) => toInputDate(showtime.date)))).sort();
+  const visibleShowtimes = (movie.showtimes || [])
+    .filter((showtime: any) => toInputDate(showtime.date) === showtimeDate)
+    .filter((showtime: any) => showtime.theatre.name.toLowerCase().includes(showtimeTheatreSearch.trim().toLowerCase()))
+    .sort((a: any, b: any) => a.time.localeCompare(b.time) || a.theatre.name.localeCompare(b.theatre.name));
+
+  return (
+    <main className="min-h-screen bg-page">
+      <Navbar userName={user.name} role={user.role} />
+      <div className="max-w-3xl mx-auto px-6 py-8">
+        <h1 className="text-2xl font-semibold">{movie.title}</h1>
+        <p className="text-muted text-sm mt-1">{movie.language} &middot; {movie.status === "RUNNING" ? "Now showing" : "Upcoming"}</p>
+
+        {movie.status === "RUNNING" ? (
+          <div className="mt-8 space-y-3">
+            <h2 className="text-lg font-medium mb-2">Showtimes</h2>
+            {movie.showtimes.length === 0 && (
+              <p className="text-muted text-sm">No showtimes listed yet.</p>
+            )}
+            {movie.showtimes.length > 0 && <>
+              <div className="flex gap-2 overflow-x-auto pb-1" aria-label="Choose showtime date">
+                {showtimeDates.map((availableDate) => (
+                  <button
+                    key={availableDate}
+                    type="button"
+                    onClick={() => setShowtimeDate(availableDate)}
+                    className={showtimeDate === availableDate ? "btn-primary whitespace-nowrap px-4 py-2 text-sm" : "card whitespace-nowrap px-4 py-2 text-sm hover:border-brand-400"}
+                  >
+                    {formatDate(availableDate)}
+                  </button>
+                ))}
+              </div>
+              <input
+                type="search"
+                className="input"
+                value={showtimeTheatreSearch}
+                onChange={(e) => setShowtimeTheatreSearch(e.target.value)}
+                placeholder="Search theatres for the selected date..."
+                aria-label="Search theatres for selected date"
+              />
+            </>}
+            {movie.showtimes.length > 0 && visibleShowtimes.length === 0 && (
+              <p className="text-muted text-sm">No theatres match that search on {formatDate(showtimeDate)}.</p>
+            )}
+            {visibleShowtimes.map((s: any) => (
+              <div key={s.id} className="card p-4 flex items-center justify-between">
+                <div>
+                  <p className="font-medium">{s.theatre.name}</p>
+                  <p className="text-xs text-muted">{s.theatre.location.name}</p>
+                </div>
+                <div className="text-right text-sm">
+                  <p>{formatDate(s.date)} &middot; {s.time}</p>
+                  <p className="text-muted">
+                    {s.format.name}
+                    {s.price != null && ` \u00b7 \u20b9${s.price}`}
+                    {s.seatsAvailable != null && ` \u00b7 ${s.seatsAvailable} seats left`}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : submitted ? (
+          <div className="card p-6 mt-8">
+            <p className="font-medium">You're all set.</p>
+            <p className="text-muted text-sm mt-1">
+              We'll alert you the moment matching tickets go live. Manage this anytime from{" "}
+              <a href="/dashboard/requests" className="text-brand-400">My requests</a>.
+            </p>
+          </div>
+        ) : (
+          <form onSubmit={submitRequest} className="card p-6 mt-8 space-y-4">
+            <h2 className="text-lg font-medium">Tell us what you want</h2>
+            <p className="text-sm text-muted -mt-2">
+              Select the theatres, formats and languages you want us to watch.
+            </p>
+
+            <div>
+              <label className="text-sm text-muted">Location</label>
+              <select className="input mt-1" required value={locationId} onChange={(e) => { setLocationId(e.target.value); setTheatreIds([]); setTheatreSearch(""); }}>
+                <option value="">Select a city</option>
+                {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-sm text-muted">Theatres <span className="text-brand-400">(select one or more)</span></label>
+              {!locationId ? (
+                <div className="input mt-1 text-muted cursor-not-allowed">Select a city first</div>
+              ) : (
+                <div className="relative mt-1">
+                  <button type="button" className="input text-left flex items-center justify-between" onClick={() => setTheatreMenuOpen(!theatreMenuOpen)} aria-expanded={theatreMenuOpen}>
+                    <span className={selectedTheatreNames.length ? "" : "text-muted"}>{selectedTheatreNames.length ? `${selectedTheatreNames.length} theatre${selectedTheatreNames.length === 1 ? "" : "s"} selected` : "Search and select theatres"}</span>
+                    <span className="text-muted">⌄</span>
+                  </button>
+                  {theatreMenuOpen && <div className="absolute z-20 mt-2 w-full card p-2 shadow-2xl">
+                    <input autoFocus className="input" placeholder="Search theatres in this city..." value={theatreSearch} onChange={(e) => setTheatreSearch(e.target.value)} />
+                    <div className="max-h-56 overflow-y-auto mt-2 space-y-1">
+                      {filteredTheatres.map((theatre) => <label key={theatre.id} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm hover:bg-surface cursor-pointer"><input type="checkbox" checked={theatreIds.includes(theatre.id)} onChange={() => toggle(theatreIds, theatre.id, setTheatreIds)} />{theatre.name}</label>)}
+                      {filteredTheatres.length === 0 && <p className="px-3 py-2 text-sm text-muted">No theatres match that search.</p>}
+                    </div>
+                    <div className="border-t border-subtle mt-2 pt-2 flex items-center justify-between"><span className="text-xs text-muted">{theatreIds.length} selected</span><button type="button" className="text-xs text-brand-400" onClick={() => setTheatreMenuOpen(false)}>Done</button></div>
+                  </div>}
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label className="text-sm text-muted">Formats <span className="text-brand-400">(select one or more)</span></label>
+              <div className="mt-2 flex flex-wrap gap-2">{formats.map((f) => <label key={f.id} className="card px-3 py-2 text-sm flex gap-2 items-center cursor-pointer"><input type="checkbox" checked={formatIds.includes(f.id)} onChange={() => toggle(formatIds, f.id, setFormatIds)} />{f.name}</label>)}</div>
+            </div>
+
+            <div>
+              <label className="text-sm text-muted">Languages <span className="text-brand-400">(select one or more)</span></label>
+              <div className="mt-2 flex flex-wrap gap-2">{["Telugu", "Hindi", "English", "Tamil", "Kannada", "Malayalam", "Marathi", "Bengali"].map((language) => <label key={language} className="card px-3 py-2 text-sm flex gap-2 items-center cursor-pointer"><input type="checkbox" checked={languages.includes(language)} onChange={() => toggle(languages, language, setLanguages)} />{language}</label>)}</div>
+            </div>
+
+            <div>
+              <label className="text-sm text-muted">Date</label>
+              <input
+                type="date"
+                className="input mt-1"
+                value={date}
+                min={todayInputDate()}
+                max={maxFutureInputDate()}
+                onChange={(e) => setDate(e.target.value)}
+                required
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-sm text-muted">Time from</label>
+                <input type="time" className="input mt-1" value={timeFrom} onChange={(e) => setTimeFrom(e.target.value)} />
+              </div>
+              <div>
+                <label className="text-sm text-muted">Time to</label>
+                <input type="time" className="input mt-1" value={timeTo} onChange={(e) => setTimeTo(e.target.value)} />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-sm text-muted">Max price</label>
+              <input type="number" className="input mt-1" value={maxPrice} onChange={(e) => setMaxPrice(e.target.value)} min={0} />
+            </div>
+
+            {error && <p className="text-sm text-red-400">{error}</p>}
+
+            <button className="btn-primary w-full" disabled={submitting || !locationId || !date || !theatreIds.length || !formatIds.length || !languages.length}>
+              {submitting ? "Saving..." : "Alert me when tickets are live"}
+            </button>
+          </form>
+        )}
+      </div>
+    </main>
+  );
+}
