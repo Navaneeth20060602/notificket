@@ -108,6 +108,24 @@ async function saveShowtimes(job: { movieId: string; locationId: string }, showt
 export async function pollAllTrackedMovies() {
   const tracked = await prisma.request.findMany({ where: { status: "ACTIVE" }, select: { movieId: true, locationId: true }, distinct: ["movieId", "locationId"] });
   for (const target of tracked) if (target.locationId) await prisma.monitorJob.upsert({ where: { movieId_locationId: { movieId: target.movieId, locationId: target.locationId } }, update: { status: "ACTIVE" }, create: { movieId: target.movieId, locationId: target.locationId, lastMessage: "Queued from an active ticket request." } });
+  // Running movies are also kept current for Browse. This is intentionally
+  // limited to Hyderabad and processed in small batches below, so the worker
+  // does not try to crawl an entire national catalogue in one burst.
+  const hyderabad = await prisma.location.findFirst({ where: { name: "Hyderabad" }, select: { id: true } });
+  let runningMovieCount = 0;
+  if (hyderabad) {
+    const runningMovies = await prisma.movie.findMany({ where: { status: "RUNNING" }, select: { id: true } });
+    runningMovieCount = runningMovies.length;
+    for (const movie of runningMovies) {
+      await prisma.monitorJob.upsert({
+        where: { movieId_locationId: { movieId: movie.id, locationId: hyderabad.id } },
+        // Do not overwrite nextCheckAt: staggered due times keep the shared
+        // worker within its conservative request budget.
+        update: { status: "ACTIVE" },
+        create: { movieId: movie.id, locationId: hyderabad.id, lastMessage: "Queued for Hyderabad running-movie catalogue sync." },
+      });
+    }
+  }
   const jobs = await prisma.monitorJob.findMany({ where: { status: "ACTIVE", nextCheckAt: { lte: new Date() } }, include: { movie: true }, orderBy: { nextCheckAt: "asc" }, take: MAX_JOBS_PER_CYCLE });
   let added = 0;
   for (const job of jobs) {
@@ -122,5 +140,5 @@ export async function pollAllTrackedMovies() {
       await prisma.monitorJob.update({ where: { id: job.id }, data: { lastCheckedAt: new Date(), nextCheckAt: nextCheck(Math.min(720, 30 * Math.max(1, job.failureCount + 1))), failureCount: { increment: 1 }, lastMessage: message } });
     }
   }
-  return { tracked: tracked.length, checked: jobs.length, added };
+  return { tracked: tracked.length, running: runningMovieCount, checked: jobs.length, added };
 }
