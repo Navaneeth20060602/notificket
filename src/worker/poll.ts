@@ -115,23 +115,6 @@ async function scanTicketPage(sourceUrl: string): Promise<ScanResult> {
         const output: { theatreName: string; time: string }[] = [];
         const allTimes = new Set<string>();
 
-        // BookMyShow does not always put a newline between the cinema name and
-        // its time buttons.  In that case the older parser discarded the whole
-        // row because it contained a time.  Use the text before the first time
-        // as a fallback venue name, while preferring an actual separate line.
-        const venueFromContainer = (container: HTMLElement) => {
-          const raw = (container.innerText || container.textContent || "").replace(/\u00a0/g, " ").trim();
-          const lines = raw.split("\n").map((line) => line.replace(/\s+/g, " ").trim()).filter(Boolean);
-          const separateLine = lines.find((line) => !timeOne.test(line) && line.length >= 4 && line.length <= 140 && venueHint.test(line));
-          if (separateLine) return separateLine;
-          const firstTime = raw.search(timeOne);
-          if (firstTime <= 3) return "";
-          const prefix = raw.slice(0, firstTime).replace(/\s+/g, " ").trim();
-          // Discard obvious page/filter labels, but do not require a particular
-          // cinema chain: independent Hyderabad theatres are valid too.
-          if (prefix.length < 4 || prefix.length > 160 || /^(movies|price range|language|format|date|showtimes?)$/i.test(prefix)) return "";
-          return prefix;
-        };
         for (const node of body.querySelectorAll("button, a, [role='button'], div, span")) {
           if (!(node instanceof HTMLElement) || node.offsetParent === null) continue;
           const own = (node.innerText || node.textContent || "").replace(/\s+/g, " ").trim();
@@ -139,7 +122,20 @@ async function scanTicketPage(sourceUrl: string): Promise<ScanResult> {
           for (const time of own.match(timeGlobal) || []) allTimes.add(time.toUpperCase().replace(/\s/g, ""));
           let venue = "";
           for (let parent: HTMLElement | null = node; parent && parent !== body; parent = parent.parentElement) {
-            venue = venueFromContainer(parent);
+            // Keep this logic inline: Playwright serializes the evaluate
+            // callback into the remote page, where TypeScript's generated
+            // helper names for nested functions do not exist.
+            const raw = (parent.innerText || parent.textContent || "").replace(/\u00a0/g, " ").trim();
+            const lines = raw.split("\n").map((line) => line.replace(/\s+/g, " ").trim()).filter(Boolean);
+            const separateLine = lines.find((line) => !timeOne.test(line) && line.length >= 4 && line.length <= 140 && venueHint.test(line));
+            if (separateLine) venue = separateLine;
+            else {
+              const firstTime = raw.search(timeOne);
+              if (firstTime > 3) {
+                const prefix = raw.slice(0, firstTime).replace(/\s+/g, " ").trim();
+                if (prefix.length >= 4 && prefix.length <= 160 && !/^(movies|price range|language|format|date|showtimes?)$/i.test(prefix)) venue = prefix;
+              }
+            }
             if (venue) break;
           }
           for (const time of own.match(timeGlobal) || []) if (venue) output.push({ theatreName: venue, time: time.toUpperCase().replace(/\s/g, "") });
