@@ -8,54 +8,44 @@ const CHECK_EVERY_MINUTES = Number(process.env.MONITOR_INTERVAL_MINUTES || 20);
 const MAX_JOBS_PER_CYCLE = Number(process.env.MONITOR_MAX_JOBS_PER_CYCLE || 3);
 const nextCheck = (minutes = CHECK_EVERY_MINUTES) => new Date(Date.now() + minutes * 60_000);
 
-function extractUrls(value: unknown, found = new Set<string>()): string[] {
-  if (typeof value === "string" && /^https:\/\/in\.bookmyshow\.com\/movies\/hyderabad\//i.test(value)) found.add(value);
-  else if (Array.isArray(value)) value.forEach((entry) => extractUrls(entry, found));
-  else if (value && typeof value === "object") Object.values(value).forEach((entry) => extractUrls(entry, found));
-  return [...found];
-}
-
 async function discoverBookMyShowUrl(title: string) {
-  const key = process.env.SERP_SEARCH_API_KEY;
-  if (!key) return null;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 25_000);
+  // Use BookMyShow's public website flow instead of a search-engine result.
+  // Search results commonly point to a stale movie-info or multimedia page,
+  // while the site's visible “Book tickets” action resolves the correct
+  // city/language-specific ET code (for example Sardar 2 Telugu).
+  const browser = await chromium.launch({
+    executablePath: process.env.BROWSER_EXECUTABLE_PATH || "/usr/bin/chromium",
+    headless: true,
+    args: ["--no-sandbox", "--disable-dev-shm-usage"],
+  });
   try {
-    const query = `${title} Hyderabad site:in.bookmyshow.com/movies/hyderabad`;
-    const response = await fetch(`https://api.serpsearch.com/api/v1/search?${new URLSearchParams({ query, gl: "in", hl: "en" })}`, { headers: { Authorization: `Bearer ${key}` }, cache: "no-store", signal: controller.signal });
-    if (!response.ok) return null;
-    const urls = extractUrls(await response.json());
-    const slug = normalizeName(title).replace(/\s+/g, "-");
-    const titleMatches = urls.filter((url) => normalizeName(url).includes(slug));
-    // Search engines often return BookMyShow's /multimedia page before the
-    // booking page. Prefer a result that is already a ticket page, then a
-    // result carrying the movie's ET code (which can be made canonical below).
-    const ranked = [...titleMatches, ...urls].sort((left, right) => {
-      const score = (url: string) => (/\/buytickets\//i.test(url) ? 3 : /ET\d{5,}/i.test(url) ? 2 : 1);
-      return score(right) - score(left);
-    });
-    return ranked[0] || null;
-  } catch { return null; } finally { clearTimeout(timeout); }
+    const page = await browser.newPage({ locale: "en-IN", timezoneId: "Asia/Kolkata" });
+    await page.goto("https://in.bookmyshow.com/explore/movies-hyderabad", { waitUntil: "domcontentloaded", timeout: 45_000 });
+    await page.waitForTimeout(700);
+    const initialText = ((await page.title()) + " " + (await page.locator("body").innerText().catch(() => "")).slice(0, 800)).toLowerCase();
+    if (/captcha|access denied|just a moment/.test(initialText)) throw new Error("Ticketing site requested verification; monitoring backed off without bypassing it.");
+
+    await page.getByRole("button", { name: "Search for Movies, Events, Plays, Sports and Activities" }).click({ timeout: 8_000 });
+    const searchBox = page.locator("input:visible, [role='textbox']:visible").first();
+    await searchBox.fill(title, { timeout: 8_000 });
+    await page.waitForTimeout(900);
+    const result = page.getByText(title, { exact: true }).first();
+    if (!(await result.isVisible().catch(() => false))) return null;
+    await result.click({ timeout: 8_000 });
+    await page.waitForTimeout(700);
+    const bookTickets = page.getByText("Book tickets", { exact: true }).first();
+    if (!(await bookTickets.isVisible().catch(() => false))) return null;
+    await bookTickets.click({ timeout: 8_000 });
+    await page.waitForTimeout(1_000);
+    return /\/buytickets\//i.test(page.url()) ? page.url() : null;
+  } finally {
+    await browser.close();
+  }
 }
 
 function dateFromUrl(url: string) {
   const compact = new URL(url).pathname.match(/\/(20\d{6})(?:\/|$)/)?.[1];
   return compact ? `${compact.slice(0, 4)}-${compact.slice(4, 6)}-${compact.slice(6, 8)}` : null;
-}
-
-function todayInKolkataCompact() {
-  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
-  const value = (kind: string) => parts.find((part) => part.type === kind)?.value || "";
-  return `${value("year")}${value("month")}${value("day")}`;
-}
-
-function canonicalTicketUrl(sourceUrl: string, title: string) {
-  if (/\/buytickets\//i.test(sourceUrl)) return sourceUrl;
-  const code = sourceUrl.match(/\bET\d{5,}\b/i)?.[0]?.toUpperCase();
-  if (!code) return sourceUrl;
-  const pathSlug = sourceUrl.match(/\/movies\/hyderabad\/([^/?]+)\/ET\d{5,}/i)?.[1];
-  const slug = pathSlug || normalizeName(title).replace(/\s+/g, "-");
-  return `https://in.bookmyshow.com/movies/hyderabad/${slug}/buytickets/${code}/${todayInKolkataCompact()}?etCodes=${code}`;
 }
 
 function dateFromLabel(label: string) {
@@ -115,6 +105,29 @@ async function scanTicketPage(sourceUrl: string): Promise<ScanResult> {
         const output: { theatreName: string; time: string }[] = [];
         const allTimes = new Set<string>();
 
+        // BookMyShow currently marks every cinema card with a public cinema
+        // link. Its alt text is the theatre name. Stop at the first ancestor
+        // that holds exactly one such link, so times cannot spill into the
+        // following theatre card in the virtualized list.
+        for (const cinema of body.querySelectorAll("a[href*='/cinemas/']")) {
+          if (!(cinema instanceof HTMLElement) || cinema.offsetParent === null) continue;
+          const theatreName = cinema.getAttribute("alt")?.trim();
+          if (!theatreName) continue;
+          let card: HTMLElement | null = cinema;
+          for (; card && card !== body; card = card.parentElement) {
+            const cardText = (card.innerText || card.textContent || "").replace(/\s+/g, " ").trim();
+            if (card.querySelectorAll("a[href*='/cinemas/']").length !== 1 || !timeOne.test(cardText)) continue;
+            for (const time of cardText.match(timeGlobal) || []) {
+              const normalizedTime = time.toUpperCase().replace(/\s/g, "");
+              allTimes.add(normalizedTime);
+              output.push({ theatreName, time: normalizedTime });
+            }
+            break;
+          }
+        }
+
+        // Fallback for a future layout which does not expose cinema links.
+        if (output.length === 0) {
         for (const node of body.querySelectorAll("button, a, [role='button'], div, span")) {
           if (!(node instanceof HTMLElement) || node.offsetParent === null) continue;
           const own = (node.innerText || node.textContent || "").replace(/\s+/g, " ").trim();
@@ -139,6 +152,7 @@ async function scanTicketPage(sourceUrl: string): Promise<ScanResult> {
             if (venue) break;
           }
           for (const time of own.match(timeGlobal) || []) if (venue) output.push({ theatreName: venue, time: time.toUpperCase().replace(/\s/g, "") });
+        }
         }
         return { output, visibleTimeCount: allTimes.size };
       });
@@ -207,7 +221,7 @@ export async function pollAllTrackedMovies() {
         await prisma.monitorJob.update({ where: { id: job.id }, data: { lastCheckedAt: new Date(), nextCheckAt: nextCheck(180), failureCount: { increment: 1 }, lastMessage: "No matching Hyderabad ticket page found; will search again later." } });
         continue;
       }
-      const sourceUrl = canonicalTicketUrl(discoveredUrl, job.movie.title);
+      const sourceUrl = discoveredUrl;
       const scan = await scanTicketPage(sourceUrl);
       const newlyAdded = await saveShowtimes(job, scan.showtimes); added += newlyAdded;
       console.log(`[monitor] ${job.movie.title}: bookingPage=${scan.looksLikeBookingPage} visibleTimes=${scan.visibleTimeCount} scanned=${scan.showtimes.length} added=${newlyAdded} url=${scan.finalUrl}`);
