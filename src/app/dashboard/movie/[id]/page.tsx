@@ -5,6 +5,15 @@ import { useParams, useRouter } from "next/navigation";
 import Navbar from "@/components/Navbar";
 import { formatDate, toInputDate, todayInputDate, maxFutureInputDate } from "@/lib/date";
 
+const TIME_OPTIONS = Array.from({ length: 96 }, (_, index) => {
+  const hour = Math.floor(index / 4);
+  const minute = (index % 4) * 15;
+  const value = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+  const suffix = hour < 12 ? "AM" : "PM";
+  const displayHour = hour % 12 || 12;
+  return { value, label: `${displayHour}:${String(minute).padStart(2, "0")} ${suffix}` };
+});
+
 export default function MovieDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -230,11 +239,17 @@ export default function MovieDetailPage() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-sm text-muted">Time from</label>
-                <input type="time" className="input mt-1" value={timeFrom} onChange={(e) => setTimeFrom(e.target.value)} />
+                <select className="input mt-1" value={timeFrom} onChange={(e) => setTimeFrom(e.target.value)}>
+                  <option value="">Any time</option>
+                  {TIME_OPTIONS.map((time) => <option key={time.value} value={time.value}>{time.label}</option>)}
+                </select>
               </div>
               <div>
                 <label className="text-sm text-muted">Time to</label>
-                <input type="time" className="input mt-1" value={timeTo} onChange={(e) => setTimeTo(e.target.value)} />
+                <select className="input mt-1" value={timeTo} onChange={(e) => setTimeTo(e.target.value)}>
+                  <option value="">Any time</option>
+                  {TIME_OPTIONS.map((time) => <option key={time.value} value={time.value}>{time.label}</option>)}
+                </select>
               </div>
             </div>
 
