@@ -35,6 +35,20 @@ function dateFromUrl(url: string) {
   return compact ? `${compact.slice(0, 4)}-${compact.slice(4, 6)}-${compact.slice(6, 8)}` : null;
 }
 
+function dateFromLabel(label: string) {
+  const match = label.toUpperCase().match(/\b(\d{1,2})\s*(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\w*\b/);
+  if (!match) return null;
+  const month = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"].indexOf(match[2]);
+  if (month < 0) return null;
+  const now = new Date();
+  let year = now.getFullYear();
+  const candidate = new Date(year, month, Number(match[1]));
+  // A ticketing page never offers dates long in the past; a January strip
+  // viewed in December belongs to the following year.
+  if (candidate.getTime() < new Date(year, now.getMonth(), now.getDate() - 2).getTime()) year++;
+  return `${year}-${String(month + 1).padStart(2, "0")}-${String(match[1]).padStart(2, "0")}`;
+}
+
 async function scanTicketPage(sourceUrl: string) {
   // Normal Chromium only: no CAPTCHA solving, proxy rotation, or site-control bypass.
   const browser = await chromium.launch({ executablePath: process.env.BROWSER_EXECUTABLE_PATH || "/usr/bin/chromium", headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage"] });
@@ -56,7 +70,7 @@ async function scanTicketPage(sourceUrl: string) {
         await page.locator(selector).nth(control.index).click({ timeout: 5_000 }).catch(() => undefined);
         await page.waitForTimeout(1_200);
       }
-      const date = dateFromUrl(page.url());
+      const date = dateFromUrl(page.url()) || dateFromLabel(control.label);
       if (!date) continue;
       const found = await page.locator("body").evaluate((body) => {
         const timeGlobal = /\b(?:(?:1[0-2]|0?[1-9]):[0-5]\d\s?(?:AM|PM)|(?:[01]?\d|2[0-3]):[0-5]\d)\b/gi;
@@ -131,12 +145,18 @@ export async function pollAllTrackedMovies() {
   for (const job of jobs) {
     try {
       const sourceUrl = job.sourceUrl || await discoverBookMyShowUrl(job.movie.title);
-      if (!sourceUrl) { await prisma.monitorJob.update({ where: { id: job.id }, data: { lastCheckedAt: new Date(), nextCheckAt: nextCheck(180), failureCount: { increment: 1 }, lastMessage: "No matching Hyderabad ticket page found; will search again later." } }); continue; }
+      if (!sourceUrl) {
+        console.warn(`[monitor] ${job.movie.title}: no matching Hyderabad ticket page found.`);
+        await prisma.monitorJob.update({ where: { id: job.id }, data: { lastCheckedAt: new Date(), nextCheckAt: nextCheck(180), failureCount: { increment: 1 }, lastMessage: "No matching Hyderabad ticket page found; will search again later." } });
+        continue;
+      }
       const showtimes = await scanTicketPage(sourceUrl);
       const newlyAdded = await saveShowtimes(job, showtimes); added += newlyAdded;
+      console.log(`[monitor] ${job.movie.title}: source found, scanned=${showtimes.length}, added=${newlyAdded}`);
       await prisma.monitorJob.update({ where: { id: job.id }, data: { sourceUrl, lastCheckedAt: new Date(), nextCheckAt: nextCheck(), failureCount: 0, lastMessage: `${showtimes.length} visible showtimes scanned; ${newlyAdded} new entries added.` } });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unexpected monitor failure.";
+      console.warn(`[monitor] ${job.movie.title}: ${message}`);
       await prisma.monitorJob.update({ where: { id: job.id }, data: { lastCheckedAt: new Date(), nextCheckAt: nextCheck(Math.min(720, 30 * Math.max(1, job.failureCount + 1))), failureCount: { increment: 1 }, lastMessage: message } });
     }
   }
