@@ -94,6 +94,14 @@ export async function POST(req: NextRequest) {
     },
   });
 
+  // A request also activates the server-side monitor. One shared job covers
+  // every user following the same movie in the same city.
+  await prisma.monitorJob.upsert({
+    where: { movieId_locationId: { movieId: data.movieId, locationId: data.locationId } },
+    update: { status: "ACTIVE", nextCheckAt: new Date(), lastMessage: "Queued by a new ticket alert request." },
+    create: { movieId: data.movieId, locationId: data.locationId, status: "ACTIVE", lastMessage: "Queued by a new ticket alert request." },
+  });
+
   // In case a matching showtime already exists (e.g. tickets released
   // moments before this request was saved), check immediately too.
   const existingMatches = await prisma.showtime.findMany({

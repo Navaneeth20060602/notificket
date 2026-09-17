@@ -14,6 +14,7 @@ export default function AdminPage() {
   const [formats, setFormats] = useState<any[]>([]);
   const [movies, setMovies] = useState<any[]>([]);
   const [allRequests, setAllRequests] = useState<any[]>([]);
+  const [monitorJobs, setMonitorJobs] = useState<any[]>([]);
 
   const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [syncingTheatres, setSyncingTheatres] = useState(false);
@@ -35,6 +36,7 @@ export default function AdminPage() {
       )
     );
     fetch("/api/admin/requests").then((r) => r.json()).then((d) => setAllRequests(d.requests || []));
+    fetch("/api/admin/monitor-jobs").then((r) => r.json()).then((d) => setMonitorJobs(d.jobs || []));
   }
 
   useEffect(() => {
@@ -206,6 +208,20 @@ export default function AdminPage() {
               </div>
               <button className="btn-primary !py-1.5" disabled={syncingTheatres} onClick={syncHyderabadTheatres}>{syncingTheatres ? "Syncing..." : "Sync Hyderabad theatres"}</button>
             </div>
+          </section>
+          <section className="card p-5 space-y-3 sm:col-span-2">
+            <div>
+              <h2 className="font-medium">Always-on ticket monitor</h2>
+              <p className="text-xs text-muted mt-1">The separate Railway monitor checks only movies with active user requests. It discovers a public Hyderabad ticket page, scans newly available dates and showtimes, and backs off if the source needs verification.</p>
+            </div>
+            {monitorJobs.length === 0 ? <p className="text-sm text-muted">No monitor jobs yet. A job starts automatically when a user saves an alert request.</p> : (
+              <div className="space-y-2">
+                {monitorJobs.slice(0, 8).map((job) => <div key={job.id} className="rounded-lg border border-subtle px-3 py-2 text-sm flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                  <span>{job.movie.title} &middot; {job.location.name}</span>
+                  <span className={job.failureCount ? "text-amber-300" : "text-green-300"}>{job.lastMessage || job.status}</span>
+                </div>)}
+              </div>
+            )}
           </section>
           <section className="card p-5 space-y-3 sm:col-span-2">
             <div className="flex flex-wrap items-center justify-between gap-3">

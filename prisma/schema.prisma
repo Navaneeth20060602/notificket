@@ -31,6 +31,7 @@ model Location {
   name      String    @unique // e.g. "Hyderabad"
   theatres  Theatre[]
   requests  Request[]
+  monitorJobs MonitorJob[]
   createdAt DateTime  @default(now())
 }
 
@@ -65,8 +66,30 @@ model Movie {
   createdAt   DateTime     @default(now())
   showtimes   Showtime[]
   requests    Request[]
+  monitorJobs MonitorJob[]
 
   @@unique([title, language])
+}
+
+// One long-lived monitoring job per movie/city combination. It lets the cloud
+// worker resume safely after restarts, avoid duplicate work, and report a
+// blocked or uncertain source without losing user requests.
+model MonitorJob {
+  id            String   @id @default(cuid())
+  movie          Movie    @relation(fields: [movieId], references: [id])
+  movieId        String
+  location       Location @relation(fields: [locationId], references: [id])
+  locationId     String
+  sourceUrl      String?
+  status         String   @default("ACTIVE") // ACTIVE | NEEDS_REVIEW | PAUSED
+  lastCheckedAt  DateTime?
+  nextCheckAt    DateTime @default(now())
+  failureCount   Int      @default(0)
+  lastMessage    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([movieId, locationId])
 }
 
 // A single bookable show: a movie, at a theatre, on a date/time, in a format.
