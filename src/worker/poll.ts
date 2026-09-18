@@ -26,9 +26,15 @@ async function discoverBookMyShowUrl(title: string) {
     const initialText = ((await page.title()) + " " + (await page.locator("body").innerText().catch(() => "")).slice(0, 800)).toLowerCase();
     if (/captcha|access denied|just a moment/.test(initialText)) throw new Error("Ticketing site requested verification; monitoring backed off without bypassing it.");
 
-    await page.getByRole("button", { name: "Search for Movies, Events, Plays, Sports and Activities" }).click({ timeout: 8_000 });
-    const searchBox = page.locator("input:visible, [role='textbox']:visible").first();
-    await searchBox.fill(title, { timeout: 8_000 });
+    const searchBtn = page.getByRole("button", { name: /search/i }).first();
+    const canClickBtn = await searchBtn.isVisible({ timeout: 3_000 }).catch(() => false);
+    if (canClickBtn) {
+      await searchBtn.click().catch(() => null);
+    }
+    const searchBox = page.locator("input:visible, [role='textbox']:visible, [placeholder*='search' i]").first();
+    const canFill = await searchBox.isVisible({ timeout: 3_000 }).catch(() => false);
+    if (!canFill) return null;
+    await searchBox.fill(title).catch(() => null);
     await page.waitForTimeout(900);
     const result = page.getByText(title, { exact: true }).first();
     if (!(await result.isVisible().catch(() => false))) return null;

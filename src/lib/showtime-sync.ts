@@ -11,36 +11,43 @@ const DEFAULT_SERP_KEY = "gt_live_553d3b6148d2d13e60d97ef9b5d5019630712fd1";
 
 export async function findToiShowtimeUrl(movieTitle: string, serpKey?: string): Promise<string | null> {
   const key = serpKey || process.env.SERP_SEARCH_API_KEY || DEFAULT_SERP_KEY;
-  const params = new URLSearchParams({
-    query: `${movieTitle} movie show time in ${CITY}`,
-    location: `${CITY}, Telangana, India`,
-    gl: "in",
-    hl: "en",
-  });
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 25_000);
-  try {
-    const res = await fetch(`https://api.serpsearch.com/api/v1/search?${params}`, {
-      headers: { Authorization: `Bearer ${key}` },
-      cache: "no-store",
-      signal: controller.signal,
+  const queries = [
+    `${movieTitle} movie show time in ${CITY}`,
+    `${movieTitle} movie showtimes ${CITY} site:timesofindia.indiatimes.com`,
+  ];
+
+  for (const query of queries) {
+    const params = new URLSearchParams({
+      query,
+      location: `${CITY}, Telangana, India`,
+      gl: "in",
+      hl: "en",
     });
-    if (!res.ok) return null;
-    const data = (await res.json()) as { organic_results?: { url?: string }[] };
-    const organic = data.organic_results || [];
-    const found = organic.find(
-      (r) =>
-        r.url?.includes("timesofindia.indiatimes.com") &&
-        r.url?.includes("movie-showtimes") &&
-        r.url?.toLowerCase().includes(TOI_CITY_SLUG),
-    );
-    return found?.url ?? null;
-  } catch (err) {
-    console.warn(`[showtime-sync] Failed to find TOI URL for ${movieTitle}:`, err);
-    return null;
-  } finally {
-    clearTimeout(timeout);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20_000);
+    try {
+      const res = await fetch(`https://api.serpsearch.com/api/v1/search?${params}`, {
+        headers: { Authorization: `Bearer ${key}` },
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      if (!res.ok) continue;
+      const data = (await res.json()) as { organic_results?: { url?: string }[] };
+      const organic = data.organic_results || [];
+      const found = organic.find(
+        (r) =>
+          r.url?.includes("timesofindia.indiatimes.com") &&
+          r.url?.includes("movie-showtimes") &&
+          r.url?.toLowerCase().includes(TOI_CITY_SLUG),
+      );
+      if (found?.url) return found.url;
+    } catch {
+      // Continue to next query
+    } finally {
+      clearTimeout(timeout);
+    }
   }
+  return null;
 }
 
 export type ScrapedShowtime = { theatreName: string; date: string; time: string };
@@ -110,7 +117,7 @@ export async function syncMovieShowtimes(movieId: string, movieTitle: string): P
   // 2. Scrape showtime events
   const showtimes = await scrapeToiShowtimes(toiUrl);
   if (showtimes.length === 0) {
-    console.warn(`[showtime-sync] No showtimes extracted for ${movieTitle} from ${toiUrl}`);
+    console.log(`[showtime-sync] ${movieTitle}: no active Hyderabad showtimes listed on TOI`);
     return 0;
   }
 
