@@ -2,6 +2,7 @@ import { chromium } from "playwright-core";
 import { prisma } from "../lib/db";
 import { matchShowtimeAgainstRequests } from "../lib/matching";
 import { normalizeName } from "../lib/api-helpers";
+import { syncMovieShowtimes } from "../lib/showtime-sync";
 
 type VisibleShowtime = { theatreName: string; time: string; date: string; format: string };
 const CHECK_EVERY_MINUTES = Number(process.env.MONITOR_INTERVAL_MINUTES || 20);
@@ -114,9 +115,11 @@ async function scanTicketPage(sourceUrl: string): Promise<ScanResult> {
           const theatreName = cinema.getAttribute("alt")?.trim();
           if (!theatreName) continue;
           let card: HTMLElement | null = cinema;
-          for (; card && card !== body; card = card.parentElement) {
-            const cardText = (card.innerText || card.textContent || "").replace(/\s+/g, " ").trim();
-            if (card.querySelectorAll("a[href*='/cinemas/']").length !== 1 || !timeOne.test(cardText)) continue;
+          while (card && card !== body) {
+            const currentCard: HTMLElement = card;
+            card = currentCard.parentElement;
+            const cardText = (currentCard.innerText || currentCard.textContent || "").replace(/\s+/g, " ").trim();
+            if (currentCard.querySelectorAll("a[href*='/cinemas/']").length !== 1 || !timeOne.test(cardText)) continue;
             for (const time of cardText.match(timeGlobal) || []) {
               const normalizedTime = time.toUpperCase().replace(/\s/g, "");
               allTimes.add(normalizedTime);
@@ -215,6 +218,21 @@ export async function pollAllTrackedMovies() {
   let added = 0;
   for (const job of jobs) {
     try {
+      const fastAdded = await syncMovieShowtimes(job.movieId, job.movie.title);
+      if (fastAdded > 0) {
+        added += fastAdded;
+        await prisma.monitorJob.update({
+          where: { id: job.id },
+          data: {
+            lastCheckedAt: new Date(),
+            nextCheckAt: nextCheck(),
+            failureCount: 0,
+            lastMessage: `Showtimes synced successfully; ${fastAdded} new entries added.`,
+          },
+        });
+        continue;
+      }
+
       const discoveredUrl = job.sourceUrl || await discoverBookMyShowUrl(job.movie.title);
       if (!discoveredUrl) {
         console.warn(`[monitor] ${job.movie.title}: no matching Hyderabad ticket page found.`);

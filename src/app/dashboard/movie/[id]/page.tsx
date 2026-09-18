@@ -42,12 +42,29 @@ export default function MovieDetailPage() {
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState("");
 
+  const [syncing, setSyncing] = useState(false);
+
+  function loadMovie(sync = false) {
+    if (sync) setSyncing(true);
+    fetch(`/api/movies/${movieId}${sync ? "?sync=true" : ""}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.movie) {
+          setMovie(d.movie);
+          if (d.movie.language) setLanguages([d.movie.language]);
+        }
+      })
+      .finally(() => {
+        if (sync) setSyncing(false);
+      });
+  }
+
   useEffect(() => {
     fetch("/api/auth/me").then((r) => r.json()).then((d) => {
       if (!d.user) router.replace("/login");
       else setUser(d.user);
     });
-    fetch(`/api/movies/${movieId}`).then((r) => r.json()).then((d) => { setMovie(d.movie); if (d.movie?.language) setLanguages([d.movie.language]); });
+    loadMovie();
     fetch("/api/locations").then((r) => r.json()).then((d) => setLocations(d.locations || []));
     fetch("/api/formats").then((r) => r.json()).then((d) => setFormats(d.formats || []));
   }, [movieId, router]);
@@ -118,9 +135,19 @@ export default function MovieDetailPage() {
 
         {movie.status === "RUNNING" ? (
           <div className="mt-8 space-y-3">
-            <h2 className="text-lg font-medium mb-2">Showtimes</h2>
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-lg font-medium">Showtimes</h2>
+              <button
+                type="button"
+                onClick={() => loadMovie(true)}
+                disabled={syncing}
+                className="text-xs text-brand-400 hover:text-brand-300 disabled:text-muted transition-colors flex items-center gap-1"
+              >
+                {syncing ? "Checking for latest showtimes..." : "🔄 Refresh showtimes"}
+              </button>
+            </div>
             {movie.showtimes.length === 0 && (
-              <p className="text-muted text-sm">No showtimes listed yet.</p>
+              <p className="text-muted text-sm">{syncing ? "Fetching showtimes..." : "No showtimes listed yet."}</p>
             )}
             {movie.showtimes.length > 0 && <>
               <div className="flex gap-2 overflow-x-auto pb-1" aria-label="Choose showtime date">
