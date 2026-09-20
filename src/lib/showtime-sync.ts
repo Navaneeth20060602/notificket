@@ -484,23 +484,29 @@ export async function syncMovieShowtimes(
       hl: "en",
     });
     try {
-      const braveParams = new URLSearchParams({
-        q: query,
-        country: "IN",
-        search_lang: "en",
-      });
-      const res = await fetch(`https://api.search.brave.com/res/v1/web/search?${braveParams}`, {
-        headers: { Accept: "application/json", "X-Subscription-Token": key },
+      const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&hl=en&gl=in`;
+      const res = await fetch("https://api.brightdata.com/request", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${key}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          zone: process.env.BRIGHTDATA_ZONE,
+          url: googleUrl,
+          format: "raw",
+          data_format: "parsed_light",
+        }),
         cache: "no-store",
       });
       if (!res.ok) {
-        console.warn(`[showtime-sync] Brave search failed for "${query}": HTTP ${res.status} ${await res.text().catch(() => "")}`);
+        console.warn(`[showtime-sync] Bright Data search failed for "${query}": HTTP ${res.status} ${await res.text().catch(() => "")}`);
         continue;
       }
       const data = (await res.json()) as {
-        web?: { results?: { title?: string; url?: string; description?: string }[] };
+        organic?: { title?: string; link?: string; description?: string }[];
       };
-      for (const r of data.web?.results || []) {
+      for (const r of (data.organic || []).map((o) => ({ title: o.title, url: o.link, description: o.description }))) {
         if (!r.url) continue;
 
         // BookMyShow match - Hyderabad pages for this exact movie only

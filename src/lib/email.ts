@@ -1,30 +1,37 @@
-import nodemailer from "nodemailer";
-
-// If SMTP env vars aren't set, we just log the "email" to the console instead
+// Sends email over Resend's HTTPS API instead of raw SMTP, because Railway's
+// free/Hobby plan blocks outbound SMTP ports (25/465/587) at the network
+// level - connections to smtp.gmail.com just hang until nodemailer times out.
+// An HTTPS API call is a normal web request, so it isn't affected.
+//
+// If RESEND_API_KEY isn't set, we just log the "email" to the console instead
 // of failing - so the app works fully out of the box with zero setup.
-// Fill in .env with real SMTP creds (e.g. from Resend, Gmail app password, etc.)
-// once you're ready to send real emails.
 export async function sendAlertEmail(to: string, subject: string, body: string) {
-  const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM } = process.env;
+  const { RESEND_API_KEY, SMTP_FROM } = process.env;
 
-  if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
-    console.log(`\n[EMAIL - not sent, no SMTP configured]\nTo: ${to}\nSubject: ${subject}\n${body}\n`);
+  if (!RESEND_API_KEY) {
+    console.log(`\n[EMAIL - not sent, no RESEND_API_KEY configured]\nTo: ${to}\nSubject: ${subject}\n${body}\n`);
     return { sent: false, simulated: true };
   }
 
-  const transporter = nodemailer.createTransport({
-    host: SMTP_HOST,
-    port: Number(SMTP_PORT) || 587,
-    secure: false,
-    auth: { user: SMTP_USER, pass: SMTP_PASS },
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: SMTP_FROM || "onboarding@resend.dev",
+      to,
+      subject,
+      text: body,
+    }),
   });
 
-  await transporter.sendMail({
-    from: SMTP_FROM || SMTP_USER,
-    to,
-    subject,
-    text: body,
-  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    console.warn(`[email] Resend send failed: HTTP ${res.status} ${errText}`);
+    return { sent: false, simulated: false };
+  }
 
   return { sent: true, simulated: false };
 }
