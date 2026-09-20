@@ -66,9 +66,11 @@ function titleKey(title: string): string {
   return title
     .toLowerCase()
     .replace(/&/g, " and ")
+    .replace(/['\u2019`]/g, "") // "I'm" -> "im" (BookMyShow slug: im-game)
     .replace(/[^a-z0-9]+/g, " ")
     .trim()
-    .replace(/^the /, "");
+    .replace(/^the /, "")
+    .replace(/ /g, ""); // "i m game" (District slug) and "im game" now compare equal
 }
 
 // Set SHOWTIME_DIAG=1 in the environment to dump District serverState shapes.
@@ -189,17 +191,21 @@ export async function scrapeDistrictShowtimes(
 
     const serverState = data.props?.pageProps?.data?.serverState;
     const movieContents = serverState?.movieContents || {};
-if (DIAG) {
+
+    if (DIAG) {
       console.log(`[showtime-sync][DIAG] ${districtUrl} serverState keys:`, Object.keys(serverState || {}));
     }
 
-    // Not a movie page with sessions (info-only page or a hub/listing page)
+    // Not a movie page with sessions (info-only page or a hub/listing page):
+    // nothing to scrape, and no point spending extra requests on it.
     if (!Object.keys(movieContents).length && !Object.keys(serverState?.movieSessions || {}).length) {
       console.log(`[showtime-sync] skip ${districtUrl}: no session data (keys: ${Object.keys(serverState || {}).join(",") || "none"})`);
       return [];
     }
 
-    // Only accept the page if it is actually the movie being tracked
+    // Identity gate: search results routinely surface other movies' pages
+    // (similar titles, "now showing" links). Only accept the page if it is
+    // actually the movie being tracked.
     if (expectedTitle) {
       const wanted = titleKey(expectedTitle);
       const pageTitles: string[] = Object.values(movieContents)
@@ -459,6 +465,7 @@ export async function syncMovieShowtimes(
     ...(movieLanguage ? [`${movieTitle} ${movieLanguage} movie showtimes ${CITY}`] : []),
   ];
 
+  const loggedBmsSkips = new Set<string>();
   const bmsUrls: { url: string; language: string | null }[] = [];
   const districtUrls: string[] = [];
   const toiUrls: string[] = [];
@@ -502,7 +509,10 @@ export async function syncMovieShowtimes(
           const bmsSlug = bmsMatch[1];
           const etCode = bmsMatch[2].toUpperCase();
           if (titleKey(bmsSlug.replace(/-/g, " ")) !== titleKey(movieTitle)) {
-            console.log(`[showtime-sync] skip BMS ${r.url}: slug "${bmsSlug}" is not "${movieTitle}"`);
+            if (!loggedBmsSkips.has(bmsSlug)) {
+              loggedBmsSkips.add(bmsSlug);
+              console.log(`[showtime-sync] skip BMS slug "${bmsSlug}": not "${movieTitle}" (${r.url})`);
+            }
           } else {
             const buyticketsUrl = `https://in.bookmyshow.com/movies/hyderabad/${bmsSlug}/buytickets/${etCode}/${dateCompact}`;
             if (!bmsUrls.some((b) => b.url === buyticketsUrl)) {
@@ -545,6 +555,7 @@ export async function syncMovieShowtimes(
   const scrapedAll: ScrapedShowtime[] = [];
 
   for (const bms of bmsUrls) {
+    let bmsCount = 0;
     for (let offset = 0; offset < 4; offset++) {
       const d = new Date();
       d.setDate(d.getDate() + offset);
@@ -553,17 +564,21 @@ export async function syncMovieShowtimes(
       const dateUrl = bms.url.replace(/\/\d{8}$/, `/${dCompact}`);
       const shows = await scrapeBmsViaJina(dateUrl, dDash, bms.language);
       scrapedAll.push(...shows);
+      bmsCount += shows.length;
     }
+    console.log(`[showtime-sync] ${movieTitle}: BMS ${bms.url} -> ${bmsCount} showtime(s) over 4 days`);
   }
 
   for (const distUrl of districtUrls) {
     const shows = await scrapeDistrictShowtimes(distUrl, movieLanguage, movieTitle);
     scrapedAll.push(...shows);
+    console.log(`[showtime-sync] ${movieTitle}: District ${distUrl} -> ${shows.length} showtime(s)`);
   }
 
   for (const toiUrl of toiUrls) {
     const shows = await scrapeToiShowtimes(toiUrl, movieLanguage);
     scrapedAll.push(...shows);
+    console.log(`[showtime-sync] ${movieTitle}: TOI ${toiUrl} -> ${shows.length} showtime(s)`);
   }
 
   if (scrapedAll.length === 0) {
