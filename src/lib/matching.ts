@@ -13,36 +13,40 @@ export async function matchShowtimeAgainstRequests(showtimeId: string) {
   });
   if (!showtime) return [];
 
-  // Handle pre-release requests (notify once at each theatre)
+  const results: Awaited<ReturnType<typeof prisma.notification.create>>[] = [];
+
+  // Release alerts ("tell me when this running movie reaches my theatre").
+  // One notification per theatre; the request completes once every selected theatre has been notified.
   const preReleaseRequests = await prisma.request.findMany({
     where: {
       movieId: showtime.movieId,
       status: "ACTIVE",
       preRelease: true,
     },
-    include: { user: true },
+    include: {
+      user: true,
+      notifications: { include: { showtime: { select: { theatreId: true } } } },
+    },
   });
 
-  // For pre-release: send notification only if this is the first showtime at this theatre
   for (const req of preReleaseRequests) {
     const theatreIds: string[] = JSON.parse(req.theatreIds || "[]");
-    if (!theatreIds.includes(showtime.theatreId)) continue; // theatre not in request
+    const formatIds: string[] = JSON.parse(req.formatIds || "[]");
+    const languages: string[] = JSON.parse(req.languages || "[]");
+
+    if (!theatreIds.includes(showtime.theatreId)) continue;
     if (req.locationId && req.locationId !== showtime.theatre.locationId) continue;
+    if (formatIds.length && !formatIds.includes(showtime.formatId)) continue;
+    const effectiveLang = showtime.language || showtime.movie.language;
+    if (languages.length && !languages.includes(effectiveLang)) continue;
 
-    // Check if we already sent a notification at this theatre
-    const alreadyNotified = await prisma.notification.findFirst({
-      where: {
-        requestId: req.id,
-        showtime: {
-          theatreId: showtime.theatreId,
-        },
-      },
-    });
+    // Already told this user about this theatre?
+    const notifiedTheatres = new Set(req.notifications.map((n) => n.showtime.theatreId));
+    if (notifiedTheatres.has(showtime.theatreId)) continue;
 
-    if (alreadyNotified) continue; // Already notified at this theatre
-
-    // Send notification for pre-release
-    const message = `${showtime.movie.title} is now showing at ${showtime.theatre.name} (${showtime.theatre.location.name}) starting ${formatDate(showtime.date)}!`;
+    const langStr = showtime.language ? `${showtime.language} ` : "";
+    const platStr = showtime.platform === "DISTRICT" ? "District" : "BookMyShow";
+    const message = `${showtime.movie.title} has released at ${showtime.theatre.name} (${showtime.theatre.location.name})! Tickets are live on ${platStr} (${langStr}${showtime.format.name}) from ${formatDate(showtime.date)} at ${showtime.time}.`;
 
     const notification = await prisma.notification.create({
       data: {
@@ -53,14 +57,25 @@ export async function matchShowtimeAgainstRequests(showtimeId: string) {
       },
     });
 
-    const emailResult = await sendAlertEmail(
-      req.user.email,
-      `Now showing: ${showtime.movie.title}`,
-      message
-    );
+    try {
+      const emailResult = await sendAlertEmail(
+        req.user.email,
+        `Now showing at ${showtime.theatre.name}: ${showtime.movie.title}`,
+        message,
+      );
+      if (emailResult.sent) {
+        await prisma.notification.update({ where: { id: notification.id }, data: { emailSent: true } });
+      }
+    } catch (emailErr) {
+      console.warn("[matching] release-alert email failed:", emailErr);
+    }
 
-    if (emailResult.sent) {
-      await prisma.notification.update({ where: { id: notification.id }, data: { emailSent: true } });
+    results.push(notification);
+
+    // Every selected theatre notified -> the request is done
+    notifiedTheatres.add(showtime.theatreId);
+    if (theatreIds.every((id) => notifiedTheatres.has(id))) {
+      await prisma.request.update({ where: { id: req.id }, data: { status: "COMPLETED" } });
     }
   }
 
@@ -90,7 +105,6 @@ export async function matchShowtimeAgainstRequests(showtimeId: string) {
     return true;
   });
 
-  const results = [];
   for (const req of matched) {
     const langStr = showtime.language ? `${showtime.language} ` : "";
     const platStr = showtime.platform === "DISTRICT" ? "District" : "BookMyShow";

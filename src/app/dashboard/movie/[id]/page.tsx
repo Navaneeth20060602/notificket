@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Navbar from "@/components/Navbar";
 import { formatDate, toInputDate, todayInputDate, maxFutureInputDate } from "@/lib/date";
+import { isPreReleaseWindowOpen, theatreIdsShowingNow } from "@/lib/pre-release";
 
 const TIME_OPTIONS = Array.from({ length: 96 }, (_, index) => {
   const hour = Math.floor(index / 4);
@@ -41,7 +42,7 @@ export default function MovieDetailPage() {
   const [timeFrom, setTimeFrom] = useState("");
   const [timeTo, setTimeTo] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
-  const [preRelease, setPreRelease] = useState(false);
+  const [showReleaseForm, setShowReleaseForm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState("");
@@ -102,7 +103,9 @@ export default function MovieDetailPage() {
         date,
         timeFrom: timeFrom || null,
         timeTo: timeTo || null,
-        maxPrice: maxPrice ? Number(maxPrice) : null,        preRelease,      }),
+        maxPrice: maxPrice ? Number(maxPrice) : null,
+        preRelease: movie?.status === "RUNNING",
+      }),
     });
     setSubmitting(false);
     if (!res.ok) {
@@ -110,7 +113,7 @@ export default function MovieDetailPage() {
       if (d.alreadyShowingTheatreIds?.length > 0) {
         // Auto-deselect theatres where movie is already showing
         setTheatreIds((prev) => prev.filter((id) => !d.alreadyShowingTheatreIds.includes(id)));
-        setError(`Already showing at: ${d.error}. Request only for theatres where it's not released yet.`);
+        setError(d.error);
       } else {
         setError(d.error || "Something went wrong");
       }
@@ -121,18 +124,24 @@ export default function MovieDetailPage() {
 
   if (!user || !movie) return null;
 
-  // Check if movie has showtimes on any platform
-  const hasAnyShowtimes = (movie.showtimes || []).length > 0;
-  
-  // Check if the movie is currently running (active)
   const isRunning = movie.status === "RUNNING";
-  
-  // Show pre-release checkbox if movie is running and has showtimes
-  const showPreReleaseOption = (isRunning && hasAnyShowtimes);
-  // Check if movie is currently showing on District
-  const hasDistrictShowtimes = (movie.showtimes || []).some((s: any) => s.platform === "DISTRICT");
-  // Check if movie is currently showing on BookMyShow
-  const hasBmsShowtimes = (movie.showtimes || []).some((s: any) => !s.platform || s.platform === "BMS");
+
+  // Theatres that already list this movie today or later (any platform)
+  const showingTheatreIds = theatreIdsShowingNow(movie.showtimes || []);
+
+  // Release alert is offered only while the movie is running, on sale somewhere,
+  // and release day has not passed
+  const showReleaseAlertOption =
+    isRunning && showingTheatreIds.size > 0 && isPreReleaseWindowOpen(movie.releaseDate);
+
+  // Upcoming movies always show the request form; running movies only show it
+  // once the person opens the release-alert section
+  const showRequestForm = isRunning ? showReleaseAlertOption && showReleaseForm : true;
+
+  // "Remaining" = every theatre in the chosen city that doesn't list the movie yet
+  const remainingTheatres = theatres.filter((t) => !showingTheatreIds.has(t.id));
+  const allRemainingSelected =
+    remainingTheatres.length > 0 && remainingTheatres.every((t) => theatreIds.includes(t.id));
 
   const nowDate = todayInputDate();
   const nowTime = new Date().toTimeString().slice(0, 5);
@@ -200,7 +209,7 @@ export default function MovieDetailPage() {
           {" · "}{movie.status === "RUNNING" ? "Now showing" : "Upcoming"}
         </p>
 
-        {movie.status === "RUNNING" ? (
+        {isRunning && (
           <div className="mt-8 space-y-4">
             {/* Header + Refresh */}
             <div className="flex items-center justify-between">
@@ -421,11 +430,50 @@ export default function MovieDetailPage() {
               </>
             )}
           </div>
+        )}
 
+        {/* Release alert entry point - running movies only, until release day */}
+        {showReleaseAlertOption && !submitted && !showReleaseForm && (
+          <div className="card p-4 mt-6 flex items-center justify-between gap-3">
+            <div>
+              <p className="font-medium text-sm">Not showing at your theatre yet?</p>
+              <p className="text-xs text-muted mt-0.5">
+                Get notified when it reaches theatres that don&apos;t have it yet. Available until release day.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="btn-primary !py-2 !px-4 text-sm shrink-0"
+              onClick={() => setShowReleaseForm(true)}
+            >
+              Notify me
+            </button>
+          </div>
+        )}
+
+        {submitted ? (
+          <div className="card p-6 mt-8">
+            <p className="font-medium">You&apos;re all set.</p>
+            <p className="text-muted text-sm mt-1">
+              {isRunning
+                ? "We'll alert you as soon as this movie is on sale at the theatres you picked. "
+                : "We'll alert you the moment matching tickets go live on BookMyShow or District. "}
+              Manage this anytime from{" "}
+              <a href="/dashboard/requests" className="text-brand-400">
+                My requests
+              </a>
+              .
+            </p>
+          </div>
+        ) : showRequestForm ? (
           <form onSubmit={submitRequest} className="card p-6 mt-8 space-y-4">
-            <h2 className="text-lg font-medium">Tell us what you want</h2>
+            <h2 className="text-lg font-medium">
+              {isRunning ? "Notify me when it reaches my theatre" : "Tell us what you want"}
+            </h2>
             <p className="text-sm text-muted -mt-2">
-              Select the theatres, formats and languages you want us to watch across BookMyShow and District.
+              {isRunning
+                ? "Pick theatres that don't have this movie yet. We'll alert you when it goes on sale there on BookMyShow or District."
+                : "Select the theatres, formats and languages you want us to watch across BookMyShow and District."}
             </p>
 
             <div>
@@ -450,9 +498,27 @@ export default function MovieDetailPage() {
             </div>
 
             <div>
-              <label className="text-sm text-muted">
-                Theatres <span className="text-brand-400">(select one or more)</span>
-              </label>
+              <div className="flex items-center justify-between gap-3">
+                <label className="text-sm text-muted">
+                  Theatres <span className="text-brand-400">(select one or more)</span>
+                </label>
+                {isRunning && locationId && remainingTheatres.length > 0 && (
+                  <button
+                    type="button"
+                    className="text-xs text-brand-400"
+                    onClick={() =>
+                      setTheatreIds(allRemainingSelected ? [] : remainingTheatres.map((t) => t.id))
+                    }
+                  >
+                    {allRemainingSelected ? "Clear selection" : `Select all remaining (${remainingTheatres.length})`}
+                  </button>
+                )}
+              </div>
+              {isRunning && locationId && theatres.length > 0 && remainingTheatres.length === 0 && (
+                <p className="text-xs text-muted mt-1">
+                  This movie is already showing at every theatre in this city.
+                </p>
+              )}
               {!locationId ? (
                 <div className="input mt-1 text-muted cursor-not-allowed">Select a city first</div>
               ) : (
@@ -481,19 +547,26 @@ export default function MovieDetailPage() {
                         onChange={(e) => setTheatreSearch(e.target.value)}
                       />
                       <div className="max-h-56 overflow-y-auto mt-2 space-y-1">
-                        {filteredTheatres.map((theatre) => (
-                          <label
-                            key={theatre.id}
-                            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm hover:bg-surface cursor-pointer"
-                          >
-                            <input
-                              type="checkbox"
-                              checked={theatreIds.includes(theatre.id)}
-                              onChange={() => toggle(theatreIds, theatre.id, setTheatreIds)}
-                            />
-                            {theatre.name}
-                          </label>
-                        ))}
+                        {filteredTheatres.map((theatre) => {
+                          const alreadyShowing = isRunning && showingTheatreIds.has(theatre.id);
+                          return (
+                            <label
+                              key={theatre.id}
+                              className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${
+                                alreadyShowing ? "opacity-50 cursor-not-allowed" : "hover:bg-surface cursor-pointer"
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                disabled={alreadyShowing}
+                                checked={theatreIds.includes(theatre.id)}
+                                onChange={() => toggle(theatreIds, theatre.id, setTheatreIds)}
+                              />
+                              <span className="flex-1">{theatre.name}</span>
+                              {alreadyShowing && <span className="text-[10px] text-muted">Already showing</span>}
+                            </label>
+                          );
+                        })}
                         {filteredTheatres.length === 0 && (
                           <p className="px-3 py-2 text-sm text-muted">No theatres match that search.</p>
                         )}
@@ -546,26 +619,7 @@ export default function MovieDetailPage() {
               </div>
             </div>
 
-            {showPreReleaseOption && (
-              <div className="card p-4 bg-surface border-subtle">
-                <label className="flex items-start gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={preRelease}
-                    onChange={(e) => setPreRelease(e.target.checked)}
-                    className="mt-1 rounded"
-                  />
-                  <div>
-                    <p className="font-medium text-sm">Notify on release</p>
-                    <p className="text-xs text-muted mt-0.5">
-                      Get notified when this movie is released at the selected theatres (not yet showing there)
-                    </p>
-                  </div>
-                </label>
-              </div>
-            )}
-
-            {!preRelease && (
+            {!isRunning && (
               <div>
                 <label className="text-sm text-muted">Date</label>
                 <input
@@ -575,13 +629,20 @@ export default function MovieDetailPage() {
                   min={todayInputDate()}
                   max={maxFutureInputDate()}
                   onChange={(e) => setDate(e.target.value)}
-                  onClick={(e) => e.currentTarget.showPicker?.()}
-                  onFocus={(e) => e.currentTarget.showPicker?.()}
+                  onClick={(e) => {
+                    try {
+                      e.currentTarget.showPicker?.();
+                    } catch {
+                      // showPicker() throws NotAllowedError if the browser doesn't
+                      // treat this event as a user gesture — safe to ignore, the
+                      // native date picker still opens on click regardless.
+                    }
+                  }}
                 />
               </div>
             )}
 
-            {!preRelease && (
+            {!isRunning && (
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-sm text-muted">Time from</label>
@@ -608,7 +669,7 @@ export default function MovieDetailPage() {
               </div>
             )}
 
-            {!preRelease && (
+            {!isRunning && (
               <div>
                 <label className="text-sm text-muted">Max price</label>
                 <input
@@ -627,9 +688,10 @@ export default function MovieDetailPage() {
               className="btn-primary w-full"
               disabled={submitting || !locationId || !theatreIds.length || !formatIds.length || !languages.length}
             >
-              {submitting ? "Saving..." : preRelease ? "Notify me on release" : "Alert me when tickets are live"}
+              {submitting ? "Saving..." : isRunning ? "Notify me when it releases there" : "Alert me when tickets are live"}
             </button>
           </form>
+        ) : null}
       </div>
     </main>
   );

@@ -22,26 +22,23 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (owned.status !== "ACTIVE") {
     return NextResponse.json({ error: "Only active requests can be modified" }, { status: 400 });
   }
+  // Release alerts cover many theatres and are tied to the release-day window,
+  // so they are cancel-and-recreate only.
+  if (owned.preRelease) {
+    return NextResponse.json(
+      { error: "Release alerts can't be edited. Cancel this one and create a new alert instead." },
+      { status: 400 },
+    );
+  }
 
   const body = await req.json();
-  const {
-    movieId,
-    locationId,
-    theatreId,
-    formatId,
-    languages,
-    date,
-    timeFrom,
-    timeTo,
-    maxPrice,
-    preRelease = false,
-  } = body;
+  const { locationId, theatreId, formatId, date, timeFrom, timeTo, maxPrice } = body;
 
   if (locationId === "" || theatreId === "" || date === "") {
     return NextResponse.json({ error: "Location, theatre and date are required" }, { status: 400 });
   }
 
-  if (!preRelease && date) {
+  if (date) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     if (new Date(date) < today) {
@@ -60,7 +57,6 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       timeFrom: timeFrom !== undefined ? (timeFrom || null) : owned.timeFrom,
       timeTo: timeTo !== undefined ? (timeTo || null) : owned.timeTo,
       maxPrice: maxPrice !== undefined ? (maxPrice ?? null) : owned.maxPrice,
-      preRelease: preRelease !== undefined ? preRelease : owned.preRelease,
     },
   });
 

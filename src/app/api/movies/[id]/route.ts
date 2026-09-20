@@ -5,6 +5,12 @@ import { syncMovieShowtimes } from "@/lib/showtime-sync";
 
 export const dynamic = "force-dynamic";
 
+// Opening a movie page auto-syncs when a platform is missing. For movies that are
+// only on one platform that would run 4 Brave searches + scrapes on EVERY page view,
+// so auto-sync at most once per movie per 10 minutes. "Refresh showtimes" (?sync=true) always syncs.
+const lastAutoSync = new Map<string, number>();
+const AUTO_SYNC_COOLDOWN_MS = 10 * 60_000;
+
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   let movie = await prisma.movie.findUnique({
     where: { id: params.id },
@@ -20,12 +26,12 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const movieTitle = movie.title;
   const hasDistrict = movie.showtimes.some((s) => s.platform === "DISTRICT");
   const hasBms = movie.showtimes.some((s) => s.platform === "BMS");
+  const autoSyncDue = Date.now() - (lastAutoSync.get(movie.id) ?? 0) > AUTO_SYNC_COOLDOWN_MS;
   const shouldSync =
-    movie.showtimes.length === 0 ||
-    !hasDistrict ||
-    !hasBms ||
-    req.nextUrl.searchParams.get("sync") === "true";
+    req.nextUrl.searchParams.get("sync") === "true" ||
+    (autoSyncDue && (movie.showtimes.length === 0 || !hasDistrict || !hasBms));
   if (shouldSync) {
+    lastAutoSync.set(movie.id, Date.now());
     try {
       const added = await syncMovieShowtimes(movie.id, movieTitle, movie.language);
       if (added > 0 || movie.showtimes.length === 0) {

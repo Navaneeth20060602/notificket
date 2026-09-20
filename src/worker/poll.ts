@@ -42,12 +42,18 @@ export async function pollAllTrackedMovies() {
   // 3. Execute due monitor jobs (handles both RUNNING movies and UPCOMING movies with requests)
   //    For UPCOMING movies: syncMovieShowtimes searches BMS + District + TOI — if tickets are
   //    found on either platform, shows are saved, movie status becomes RUNNING, and users are notified.
-  const jobs = await prisma.monitorJob.findMany({
+  //    Movies that users have active requests for go first, so release alerts
+  //    aren't stuck behind every other running movie in the catalogue.
+  const requestedMovieIds = new Set(tracked.map((t) => t.movieId));
+  const dueJobs = await prisma.monitorJob.findMany({
     where: { status: "ACTIVE", nextCheckAt: { lte: new Date() } },
     include: { movie: true },
     orderBy: { nextCheckAt: "asc" },
-    take: MAX_JOBS_PER_CYCLE,
   });
+  const jobs = [
+    ...dueJobs.filter((j) => requestedMovieIds.has(j.movieId)),
+    ...dueJobs.filter((j) => !requestedMovieIds.has(j.movieId)),
+  ].slice(0, MAX_JOBS_PER_CYCLE);
 
   let added = 0;
   for (const job of jobs) {
