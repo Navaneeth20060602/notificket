@@ -41,6 +41,7 @@ export default function MovieDetailPage() {
   const [timeFrom, setTimeFrom] = useState("");
   const [timeTo, setTimeTo] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
+  const [preRelease, setPreRelease] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState("");
@@ -101,8 +102,7 @@ export default function MovieDetailPage() {
         date,
         timeFrom: timeFrom || null,
         timeTo: timeTo || null,
-        maxPrice: maxPrice ? Number(maxPrice) : null,
-      }),
+        maxPrice: maxPrice ? Number(maxPrice) : null,        preRelease,      }),
     });
     setSubmitting(false);
     if (!res.ok) {
@@ -538,64 +538,87 @@ export default function MovieDetailPage() {
               </div>
             </div>
 
-            <div>
-              <label className="text-sm text-muted">Date</label>
-              <input
-                type="date"
-                className="input mt-1"
-                value={date}
-                min={todayInputDate()}
-                max={maxFutureInputDate()}
-                onChange={(e) => setDate(e.target.value)}
-                onClick={(e) => e.currentTarget.showPicker?.()}
-                onFocus={(e) => e.currentTarget.showPicker?.()}
-                required
-              />
+            <div className="card p-4 bg-surface border-subtle">
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={preRelease}
+                  onChange={(e) => setPreRelease(e.target.checked)}
+                  className="mt-1 rounded"
+                />
+                <div>
+                  <p className="font-medium text-sm">Notify on release</p>
+                  <p className="text-xs text-muted mt-0.5">
+                    Get notified when this movie is released at the selected theatres (before ticket sales start)
+                  </p>
+                </div>
+              </label>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            {!preRelease && (
               <div>
-                <label className="text-sm text-muted">Time from</label>
-                <select className="input mt-1" value={timeFrom} onChange={(e) => setTimeFrom(e.target.value)}>
-                  <option value="">Any time</option>
-                  {TIME_OPTIONS.map((time) => (
-                    <option key={time.value} value={time.value}>
-                      {time.label}
-                    </option>
-                  ))}
-                </select>
+                <label className="text-sm text-muted">Date</label>
+                <input
+                  type="date"
+                  className="input mt-1"
+                  value={date}
+                  min={todayInputDate()}
+                  max={maxFutureInputDate()}
+                  onChange={(e) => setDate(e.target.value)}
+                  onClick={(e) => e.currentTarget.showPicker?.()}
+                  onFocus={(e) => e.currentTarget.showPicker?.()}
+                  required
+                />
               </div>
-              <div>
-                <label className="text-sm text-muted">Time to</label>
-                <select className="input mt-1" value={timeTo} onChange={(e) => setTimeTo(e.target.value)}>
-                  <option value="">Any time</option>
-                  {TIME_OPTIONS.map((time) => (
-                    <option key={time.value} value={time.value}>
-                      {time.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
+            )}
 
-            <div>
-              <label className="text-sm text-muted">Max price</label>
-              <input
-                type="number"
-                className="input mt-1"
-                value={maxPrice}
-                onChange={(e) => setMaxPrice(e.target.value)}
-                min={0}
-              />
-            </div>
+            {!preRelease && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-sm text-muted">Time from</label>
+                  <select className="input mt-1" value={timeFrom} onChange={(e) => setTimeFrom(e.target.value)}>
+                    <option value="">Any time</option>
+                    {TIME_OPTIONS.map((time) => (
+                      <option key={time.value} value={time.value}>
+                        {time.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-sm text-muted">Time to</label>
+                  <select className="input mt-1" value={timeTo} onChange={(e) => setTimeTo(e.target.value)}>
+                    <option value="">Any time</option>
+                    {TIME_OPTIONS.map((time) => (
+                      <option key={time.value} value={time.value}>
+                        {time.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
+
+            {!preRelease && (
+              <div>
+                <label className="text-sm text-muted">Max price</label>
+                <input
+                  type="number"
+                  className="input mt-1"
+                  value={maxPrice}
+                  onChange={(e) => setMaxPrice(e.target.value)}
+                  min={0}
+                />
+              </div>
+            )}
 
             {error && <p className="text-sm text-red-400">{error}</p>}
 
             <button
               className="btn-primary w-full"
-              disabled={submitting || !locationId || !date || !theatreIds.length || !formatIds.length || !languages.length}
+              disabled={submitting || !locationId || !theatreIds.length || !formatIds.length || !languages.length}
             >
-              {submitting ? "Saving..." : "Alert me when tickets are live"}
+              {submitting ? "Saving..." : preRelease ? "Notify me on release" : "Alert me when tickets are live"}
             </button>
           </form>
         )}

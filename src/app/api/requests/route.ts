@@ -38,6 +38,7 @@ const schema = z.object({
   timeFrom: z.string().optional().nullable(),
   timeTo: z.string().optional().nullable(),
   maxPrice: z.number().optional().nullable(),
+  preRelease: z.boolean().optional().default(false),
 });
 
 // POST: create a new alert request ("notify me when tickets matching this open")
@@ -50,13 +51,25 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json();
+  const {
+    movieId,
+    locationId,
+    theatreIds,
+    formatIds,
+    languages,
+    date,
+    timeFrom,
+    timeTo,
+    maxPrice,
+    preRelease = false,
+  } = body;
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
   }
   const data = parsed.data;
 
-  {
+  if (!data.preRelease) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     if (new Date(data.date) < today) {
@@ -91,6 +104,7 @@ export async function POST(req: NextRequest) {
       timeFrom: data.timeFrom || null,
       timeTo: data.timeTo || null,
       maxPrice: data.maxPrice ?? null,
+      preRelease: data.preRelease ?? false,
     },
   });
 

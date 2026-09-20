@@ -13,10 +13,63 @@ export async function matchShowtimeAgainstRequests(showtimeId: string) {
   });
   if (!showtime) return [];
 
+  // Handle pre-release requests (notify once at each theatre)
+  const preReleaseRequests = await prisma.request.findMany({
+    where: {
+      movieId: showtime.movieId,
+      status: "ACTIVE",
+      preRelease: true,
+    },
+    include: { user: true },
+  });
+
+  // For pre-release: send notification only if this is the first showtime at this theatre
+  for (const req of preReleaseRequests) {
+    const theatreIds: string[] = JSON.parse(req.theatreIds || "[]");
+    if (!theatreIds.includes(showtime.theatreId)) continue; // theatre not in request
+    if (req.locationId && req.locationId !== showtime.theatre.locationId) continue;
+
+    // Check if we already sent a notification at this theatre
+    const alreadyNotified = await prisma.notification.findFirst({
+      where: {
+        requestId: req.id,
+        showtime: {
+          theatreId: showtime.theatreId,
+        },
+      },
+    });
+
+    if (alreadyNotified) continue; // Already notified at this theatre
+
+    // Send notification for pre-release
+    const message = `${showtime.movie.title} is now showing at ${showtime.theatre.name} (${showtime.theatre.location.name}) starting ${formatDate(showtime.date)}!`;
+
+    const notification = await prisma.notification.create({
+      data: {
+        userId: req.userId,
+        requestId: req.id,
+        showtimeId: showtime.id,
+        message,
+      },
+    });
+
+    const emailResult = await sendAlertEmail(
+      req.user.email,
+      `Now showing: ${showtime.movie.title}`,
+      message
+    );
+
+    if (emailResult.sent) {
+      await prisma.notification.update({ where: { id: notification.id }, data: { emailSent: true } });
+    }
+  }
+
+  // Handle regular requests (match against showtime details)
   const candidateRequests = await prisma.request.findMany({
     where: {
       movieId: showtime.movieId,
       status: "ACTIVE",
+      preRelease: false, // Only match non-pre-release requests
     },
     include: { user: true },
   });

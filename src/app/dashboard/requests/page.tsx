@@ -50,12 +50,17 @@ export default function RequestsPage() {
       timeFrom: req.timeFrom || "",
       timeTo: req.timeTo || "",
       maxPrice: req.maxPrice ?? "",
+      preRelease: req.preRelease || false,
     });
   }
 
   async function saveEdit(id: string) {
-    if (!editState.locationId || !editState.theatreId || !editState.date) {
-      setEditError("Location, theatre and date are required.");
+    if (!editState.locationId || !editState.theatreId) {
+      setEditError("Location and theatre are required.");
+      return;
+    }
+    if (!editState.preRelease && !editState.date) {
+      setEditError("Date is required for non-pre-release requests.");
       return;
     }
     setSaving(true);
@@ -71,6 +76,7 @@ export default function RequestsPage() {
         timeFrom: editState.timeFrom || null,
         timeTo: editState.timeTo || null,
         maxPrice: editState.maxPrice ? Number(editState.maxPrice) : null,
+        preRelease: editState.preRelease ?? false,
       }),
     });
     setSaving(false);
@@ -100,16 +106,29 @@ export default function RequestsPage() {
               <div key={r.id} className="card p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="font-medium">{r.movie.title}</p>
+                    <p className="font-medium">
+                      {r.movie.title}
+                      {r.preRelease && (
+                        <span className="ml-2 text-xs px-2 py-0.5 rounded-full bg-purple-900/50 text-purple-300 border border-purple-700/50">
+                          Pre-release
+                        </span>
+                      )}
+                    </p>
                     <p className="text-xs text-muted mt-1">
                       {r.location?.name || "Location required"} &middot; {r.theatre?.name || "Theatre required"} &middot;{" "}
                       {r.format?.name || "Any format"}
                     </p>
                     <p className="text-xs text-muted">
-                      {r.date ? formatDate(r.date) : "Date required"}
-                      {" \u00b7 "}
-                      {r.timeFrom || "Any time"}{r.timeTo ? ` - ${r.timeTo}` : ""}
-                      {r.maxPrice ? ` \u00b7 up to \u20b9${r.maxPrice}` : ""}
+                      {r.preRelease ? (
+                        <span>Releases at {r.theatre?.name || "selected theatres"}</span>
+                      ) : (
+                        <>
+                          {r.date ? formatDate(r.date) : "Date required"}
+                          {" \u00b7 "}
+                          {r.timeFrom || "Any time"}{r.timeTo ? ` - ${r.timeTo}` : ""}
+                          {r.maxPrice ? ` \u00b7 up to \u20b9${r.maxPrice}` : ""}
+                        </>
+                      )}
                     </p>
                   </div>
                   <div className="flex gap-2 shrink-0">
@@ -148,31 +167,49 @@ export default function RequestsPage() {
                       </select>
                     </div>
 
-                    <div>
-                      <label className="text-xs text-muted">Date</label>
-                      <input type="date" className="input mt-1" value={editState.date}
-                        min={todayInputDate()} max={maxFutureInputDate()}
-                        onChange={(e) => setEditState({ ...editState, date: e.target.value })} required />
+                    <div className="card p-3 bg-surface border-subtle">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={editState.preRelease || false}
+                          onChange={(e) => setEditState({ ...editState, preRelease: e.target.checked })}
+                          className="rounded"
+                        />
+                        <span className="text-sm">Pre-release notification</span>
+                      </label>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3">
+                    {!editState.preRelease && (
                       <div>
-                        <label className="text-xs text-muted">Time from</label>
-                        <input type="time" className="input mt-1" value={editState.timeFrom}
-                          onChange={(e) => setEditState({ ...editState, timeFrom: e.target.value })} />
+                        <label className="text-xs text-muted">Date</label>
+                        <input type="date" className="input mt-1" value={editState.date}
+                          min={todayInputDate()} max={maxFutureInputDate()}
+                          onChange={(e) => setEditState({ ...editState, date: e.target.value })} required />
                       </div>
-                      <div>
-                        <label className="text-xs text-muted">Time to</label>
-                        <input type="time" className="input mt-1" value={editState.timeTo}
-                          onChange={(e) => setEditState({ ...editState, timeTo: e.target.value })} />
-                      </div>
-                    </div>
+                    )}
 
-                    <div>
-                      <label className="text-xs text-muted">Max price</label>
-                      <input type="number" className="input mt-1" value={editState.maxPrice}
-                        onChange={(e) => setEditState({ ...editState, maxPrice: e.target.value })} />
-                    </div>
+                    {!editState.preRelease && (
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-xs text-muted">Time from</label>
+                          <input type="time" className="input mt-1" value={editState.timeFrom}
+                            onChange={(e) => setEditState({ ...editState, timeFrom: e.target.value })} />
+                        </div>
+                        <div>
+                          <label className="text-xs text-muted">Time to</label>
+                          <input type="time" className="input mt-1" value={editState.timeTo}
+                            onChange={(e) => setEditState({ ...editState, timeTo: e.target.value })} />
+                        </div>
+                      </div>
+                    )}
+
+                    {!editState.preRelease && (
+                      <div>
+                        <label className="text-xs text-muted">Max price</label>
+                        <input type="number" className="input mt-1" value={editState.maxPrice}
+                          onChange={(e) => setEditState({ ...editState, maxPrice: e.target.value })} />
+                      </div>
+                    )}
 
                     {editError && <p className="text-xs text-red-400">{editError}</p>}
 

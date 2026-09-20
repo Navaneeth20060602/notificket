@@ -24,13 +24,24 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
 
   const body = await req.json();
-  const { locationId, theatreId, formatId, date, timeFrom, timeTo, maxPrice } = body;
+  const {
+    movieId,
+    locationId,
+    theatreId,
+    formatId,
+    languages,
+    date,
+    timeFrom,
+    timeTo,
+    maxPrice,
+    preRelease = false,
+  } = body;
 
   if (locationId === "" || theatreId === "" || date === "") {
     return NextResponse.json({ error: "Location, theatre and date are required" }, { status: 400 });
   }
 
-  if (date) {
+  if (!preRelease && date) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     if (new Date(date) < today) {
@@ -49,6 +60,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       timeFrom: timeFrom !== undefined ? (timeFrom || null) : owned.timeFrom,
       timeTo: timeTo !== undefined ? (timeTo || null) : owned.timeTo,
       maxPrice: maxPrice !== undefined ? (maxPrice ?? null) : owned.maxPrice,
+      preRelease: preRelease !== undefined ? preRelease : owned.preRelease,
     },
   });
 

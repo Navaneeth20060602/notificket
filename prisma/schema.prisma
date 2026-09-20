@@ -140,6 +140,7 @@ model Request {
   languages  String @default("[]")
 
   status    String        @default("ACTIVE") // "ACTIVE" | "COMPLETED" | "CANCELLED"
+  preRelease Boolean       @default(false) // true = notify on first appearance at a theatre
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
 
