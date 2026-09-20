@@ -173,18 +173,27 @@ export async function scrapeDistrictShowtimes(
           const theatreName = (c.entityName || "").replace(/\s+/g, " ").trim();
           if (!theatreName) continue;
           for (const s of c.sessions || []) {
-            if (!s.showTime) continue;
-            const showDateTime = new Date(s.showTime);
-            if (Number.isNaN(showDateTime.valueOf())) continue;
-            // District's API returns UTC timestamps - convert to IST before slicing
-            const istParts = new Intl.DateTimeFormat("en-CA", {
-              timeZone: "Asia/Kolkata",
-              year: "numeric", month: "2-digit", day: "2-digit",
-              hour: "2-digit", minute: "2-digit", hour12: false,
-            }).formatToParts(showDateTime);
-            const get = (t: string) => istParts.find((p) => p.type === t)?.value || "";
-            const date = `${get("year")}-${get("month")}-${get("day")}`;
-            const time = `${get("hour")}:${get("minute")}`;
+            if (!s.showTime || s.showTime.length < 16) continue;
+
+            const rawDate = s.showTime.slice(0, 10); // "YYYY-MM-DD"
+            const rawTime = s.showTime.slice(11, 16); // "HH:MM"
+            const [y, mo, d] = rawDate.split("-").map(Number);
+            const [h, mi] = rawTime.split(":").map(Number);
+            if ([y, mo, d, h, mi].some((n) => Number.isNaN(n))) continue;
+
+            // District's raw showTime is UTC - shift +5:30 to IST, by hand
+            // (not via `new Date(s.showTime)`, which failed to parse this format).
+            const totalMinutes = h * 60 + mi + 330;
+            const dayOverflow = Math.floor(totalMinutes / 1440);
+            const minutesInDay = totalMinutes % 1440;
+            const istHour = Math.floor(minutesInDay / 60);
+            const istMinute = minutesInDay % 60;
+
+            const baseDate = new Date(Date.UTC(y, mo - 1, d));
+            baseDate.setUTCDate(baseDate.getUTCDate() + dayOverflow);
+            const date = baseDate.toISOString().slice(0, 10);
+            const time = `${String(istHour).padStart(2, "0")}:${String(istMinute).padStart(2, "0")}`;
+
             let format = s.scrnFmt || "2D";
             if (/\bIMAX\b/i.test(theatreName)) format = "IMAX";
             else if (/\b4DX\b/i.test(theatreName)) format = "4DX";
