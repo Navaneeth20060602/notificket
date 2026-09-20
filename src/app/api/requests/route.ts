@@ -126,7 +126,7 @@ export async function POST(req: NextRequest) {
       theatreIds: JSON.stringify([...new Set(data.theatreIds)]),
       formatIds: JSON.stringify([...new Set(data.formatIds)]),
       languages: JSON.stringify([...new Set(data.languages)]),
-      date: new Date(data.date),
+      date: data.date ? new Date(data.date) : null,
       timeFrom: data.timeFrom || null,
       timeTo: data.timeTo || null,
       maxPrice: data.maxPrice ?? null,
