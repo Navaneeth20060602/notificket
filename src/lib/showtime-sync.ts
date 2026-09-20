@@ -37,22 +37,31 @@ function extractLanguageFromUrlOrText(str: string): string | null {
   return null;
 }
 
-function normalizeDistrictUrlToCity(url: string, citySlug: string): string {
-  const match = url.match(/^(https?:\/\/[^/]+\/movies\/)([a-z0-9-]+?)(?:-in-[a-z-]+)?(-movie-tickets-MV\d+.*)$/i);
-  if (!match) return url;
-  const [, base, slug, suffix] = match;
-  return `${base}${slug}-in-${citySlug}${suffix}`;
+// District has two page types per movie:
+//   info page     /movies/<slug>-in-<city>-movie-tickets-MV<id>   (cast, reviews - NO showtimes)
+//   booking page  /movies/<slug>-movie-tickets-in-<city>-MV<id>   (showtimes)
+// Search results can return either, or the city-less form. Parse any of them.
+const DISTRICT_CITIES = "delhi-ncr|bengaluru|mumbai|hyderabad|kolkata|chandigarh|ahmedabad|pune|chennai";
+const DISTRICT_MOVIE_URL_RE = new RegExp(
+  `^https?://(?:www\\.)?district\\.in/movies/([a-z0-9-]+?)-movie-tickets(?:-in-(?:${DISTRICT_CITIES}))?-(MV\\d+)(?:[/?#].*)?$`,
+  "i",
+);
+function parseDistrictMovieUrl(url: string): { slug: string; mvId: string } | null {
+  const m = url.match(DISTRICT_MOVIE_URL_RE);
+  if (!m) return null; // city hubs, "cinemas-in-...", "upcoming-..." lists, etc.
+  // Info-page form carries "-in-<city>" inside the slug; strip only known city suffixes
+  // so titles like "sex-in-the-city" stay intact.
+  const slug = m[1].toLowerCase().replace(new RegExp(`-in-(?:${DISTRICT_CITIES})$`), "");
+  return { slug, mvId: m[2].toUpperCase() };
+}
+function districtBookingUrl(url: string, citySlug: string): string | null {
+  const p = parseDistrictMovieUrl(url);
+  return p ? `https://www.district.in/movies/${p.slug}-movie-tickets-in-${citySlug}-${p.mvId}` : null;
 }
 
-// District movie pages always end in "-movie-tickets-MV<id>". Anything else that
-// matches district.in/movies/ (city hubs, "cinemas-in-...", "upcoming-..." lists)
-// is a listing page, not a movie page, and must never be scraped for showtimes.
-const DISTRICT_MOVIE_ID_RE = /\/movies\/[a-z0-9-]+-movie-tickets-(MV\d+)/i;
-function districtMovieId(url: string): string | null {
-  return url.match(DISTRICT_MOVIE_ID_RE)?.[1]?.toUpperCase() ?? null;
-}
-
-// Exact title match after ignoring case, punctuation and a leading "The".
+// Loose-but-safe title key for "is this page the movie we're tracking?".
+// Exact match only (after case/punctuation/leading "The" are ignored): a wrong
+// rejection shows up in the logs, a wrong acceptance silently corrupts showtimes.
 function titleKey(title: string): string {
   return title
     .toLowerCase()
@@ -502,15 +511,15 @@ export async function syncMovieShowtimes(
           }
         }
 
-        // District.in match - force the Hyderabad city segment
+        // District.in match - always rewritten to the Hyderabad BOOKING page (the one with showtimes)
         if (r.url.includes("district.in/movies/")) {
-          const mvId = districtMovieId(r.url);
-          if (mvId) {
-            const normalized = normalizeDistrictUrlToCity(r.url, "hyderabad");
-            if (!districtUrls.some((u) => districtMovieId(u) === mvId)) {
-              districtUrls.push(normalized);
-              if (normalized !== r.url) {
-                console.log(`[showtime-sync] normalized District URL: ${r.url} -> ${normalized}`);
+          const parsed = parseDistrictMovieUrl(r.url);
+          if (parsed) {
+            const bookingUrl = districtBookingUrl(r.url, "hyderabad")!;
+            if (!districtUrls.some((u) => parseDistrictMovieUrl(u)?.mvId === parsed.mvId)) {
+              districtUrls.push(bookingUrl);
+              if (bookingUrl !== r.url) {
+                console.log(`[showtime-sync] District URL: ${r.url} -> ${bookingUrl}`);
               }
             }
           }
