@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/api-helpers";
 import { syncMovieShowtimes } from "@/lib/showtime-sync";
@@ -15,7 +15,7 @@ export async function POST() {
 
   const movies = await prisma.movie.findMany({
     where: { status: "RUNNING" },
-    select: { id: true, title: true },
+    select: { id: true, title: true, language: true },
   });
 
   let totalAdded = 0;
@@ -24,7 +24,7 @@ export async function POST() {
 
   for (const movie of movies) {
     try {
-      const added = await syncMovieShowtimes(movie.id, movie.title);
+      const added = await syncMovieShowtimes(movie.id, movie.title, movie.language);
       totalAdded += added;
       checked++;
     } catch (err) {

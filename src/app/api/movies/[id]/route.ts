@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/api-helpers";
 import { syncMovieShowtimes } from "@/lib/showtime-sync";
@@ -21,7 +21,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const shouldSync = movie.showtimes.length === 0 || req.nextUrl.searchParams.get("sync") === "true";
   if (shouldSync) {
     try {
-      const added = await syncMovieShowtimes(movie.id, movieTitle);
+      const added = await syncMovieShowtimes(movie.id, movieTitle, movie.language);
       if (added > 0 || movie.showtimes.length === 0) {
         const refreshed = await prisma.movie.findUnique({
           where: { id: params.id },
@@ -42,7 +42,6 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   return NextResponse.json({ movie });
 }
 
-// Admin-only: fix incorrect info (title, language, status, release date, poster)
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     await requireAdmin();

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -15,6 +15,7 @@ export default function AdminPage() {
   const [movies, setMovies] = useState<any[]>([]);
   const [allRequests, setAllRequests] = useState<any[]>([]);
   const [monitorJobs, setMonitorJobs] = useState<any[]>([]);
+  const [feedbacks, setFeedbacks] = useState<any[]>([]);
 
   const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [syncingTheatres, setSyncingTheatres] = useState(false);
@@ -37,6 +38,7 @@ export default function AdminPage() {
     );
     fetch("/api/admin/requests").then((r) => r.json()).then((d) => setAllRequests(d.requests || []));
     fetch("/api/admin/monitor-jobs").then((r) => r.json()).then((d) => setMonitorJobs(d.jobs || []));
+    fetch("/api/admin/feedback").then((r) => r.json()).then((d) => setFeedbacks(d.feedbacks || []));
   }
 
   useEffect(() => {
@@ -48,7 +50,6 @@ export default function AdminPage() {
     refreshAll();
   }, [router]);
 
-  // ---- Add Location ----
   async function syncHyderabadTheatres() {
     setSyncingTheatres(true);
     const res = await fetch("/api/admin/import/hyderabad-theatres", { method: "POST" });
@@ -90,7 +91,6 @@ export default function AdminPage() {
     refreshAll();
   }
 
-  // ---- Add Theatre ----
   const [theatreName, setTheatreName] = useState("");
   const [theatreLocationId, setTheatreLocationId] = useState("");
   async function addTheatre(e: React.FormEvent) {
@@ -106,7 +106,6 @@ export default function AdminPage() {
     refreshAll();
   }
 
-  // ---- Add Format ----
   const [formatName, setFormatName] = useState("");
   async function addFormat(e: React.FormEvent) {
     e.preventDefault();
@@ -121,7 +120,6 @@ export default function AdminPage() {
     refreshAll();
   }
 
-  // ---- Add Movie ----
   const [movieTitle, setMovieTitle] = useState("");
   const [movieLang, setMovieLang] = useState("Telugu");
   const [movieStatus, setMovieStatus] = useState("UPCOMING");
@@ -142,7 +140,6 @@ export default function AdminPage() {
     refreshAll();
   }
 
-  // ---- Edit existing movie (fix wrong info) ----
   const [editMovieId, setEditMovieId] = useState("");
   const [editTitle, setEditTitle] = useState("");
   const [editLang, setEditLang] = useState("");
@@ -163,7 +160,6 @@ export default function AdminPage() {
     refreshAll();
   }
 
-  // ---- Simulate ticket release (stands in for the automatic poller) ----
   const [relMovieId, setRelMovieId] = useState("");
   const [relTheatreId, setRelTheatreId] = useState("");
   const [relFormatId, setRelFormatId] = useState("");
@@ -212,14 +208,28 @@ export default function AdminPage() {
           <section className="card p-5 space-y-3 sm:col-span-2">
             <div>
               <h2 className="font-medium">Always-on ticket monitor</h2>
-              <p className="text-xs text-muted mt-1">The separate Railway monitor checks only movies with active user requests. It discovers a public Hyderabad ticket page, scans newly available dates and showtimes, and backs off if the source needs verification.</p>
+              <p className="text-xs text-muted mt-1">Checks movies with active user requests every 20 minutes using the Times of India public showtime pages. No browser required.</p>
             </div>
             {monitorJobs.length === 0 ? <p className="text-sm text-muted">No monitor jobs yet. A job starts automatically when a user saves an alert request.</p> : (
               <div className="space-y-2">
-                {monitorJobs.slice(0, 8).map((job) => <div key={job.id} className="rounded-lg border border-subtle px-3 py-2 text-sm flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                  <span>{job.movie.title} &middot; {job.location.name}</span>
-                  <span className={job.failureCount ? "text-amber-300" : "text-green-300"}>{job.lastMessage || job.status}</span>
-                </div>)}
+                {monitorJobs.slice(0, 12).map((job) => (
+                  <div key={job.id} className="rounded-lg border border-subtle px-3 py-2 text-sm flex flex-col gap-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium truncate">{job.movie.title} &middot; {job.location.name}</span>
+                      <span className={`text-xs shrink-0 ${job.failureCount ? "text-amber-300" : "text-green-300"}`}>{job.status}</span>
+                    </div>
+                    {job.lastMessage && (
+                      <details className="text-xs text-muted">
+                        <summary className="cursor-pointer hover:text-foreground">
+                          {(job.lastMessage as string).length > 120
+                            ? (job.lastMessage as string).slice(0, 120) + "\u2026"
+                            : job.lastMessage}
+                        </summary>
+                        <pre className="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap break-all text-[10px] bg-surface p-2 rounded">{job.lastMessage}</pre>
+                      </details>
+                    )}
+                  </div>
+                ))}
               </div>
             )}
           </section>
@@ -235,7 +245,7 @@ export default function AdminPage() {
           <section className="card p-5 space-y-3 sm:col-span-2">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h2 className="font-medium">Current & upcoming movies</h2>
+                <h2 className="font-medium">Current &amp; upcoming movies</h2>
                 <p className="text-xs text-muted mt-1">Imports Indian current and upcoming films, release dates and posters from TMDB. Existing movies are updated, never duplicated.</p>
               </div>
               <button className="btn-primary !py-1.5" disabled={syncingMovies} onClick={syncTmdbMovies}>{syncingMovies ? "Syncing..." : "Sync movies from TMDB"}</button>
@@ -331,6 +341,22 @@ export default function AdminPage() {
               </div>
             ))}
             {allRequests.length === 0 && <p className="text-muted text-sm">No requests yet.</p>}
+          </div>
+        </div>
+
+        <div>
+          <h2 className="font-medium mb-3">User Feedback ({feedbacks.length})</h2>
+          <div className="space-y-2">
+            {feedbacks.map((f) => (
+              <div key={f.id} className="card p-3 text-sm">
+                <div className="flex justify-between items-start gap-2">
+                  <span className="font-medium">{f.user.name} <span className="text-muted font-normal">({f.user.email})</span></span>
+                  <span className="text-xs text-muted shrink-0">{new Date(f.createdAt).toLocaleDateString("en-IN")}</span>
+                </div>
+                <p className="text-muted mt-1 break-words">{f.message}</p>
+              </div>
+            ))}
+            {feedbacks.length === 0 && <p className="text-muted text-sm">No feedback yet.</p>}
           </div>
         </div>
       </div>

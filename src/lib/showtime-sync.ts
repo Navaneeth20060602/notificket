@@ -1,4 +1,4 @@
-import { prisma } from "./db";
+﻿import { prisma } from "./db";
 import { normalizeName } from "./api-helpers";
 import { matchShowtimeAgainstRequests } from "./matching";
 
@@ -9,10 +9,11 @@ const USER_AGENT =
 
 const DEFAULT_SERP_KEY = "gt_live_553d3b6148d2d13e60d97ef9b5d5019630712fd1";
 
-export async function findToiShowtimeUrl(movieTitle: string, serpKey?: string): Promise<string | null> {
+export async function findToiShowtimeUrl(movieTitle: string, movieLanguage?: string, serpKey?: string): Promise<string | null> {
   const key = serpKey || process.env.SERP_SEARCH_API_KEY || DEFAULT_SERP_KEY;
   const queries = [
     `${movieTitle} movie show time in ${CITY}`,
+    ...(movieLanguage ? [`${movieTitle} ${movieLanguage} movie showtimes ${CITY}`] : []),
     `${movieTitle} movie showtimes ${CITY} site:timesofindia.indiatimes.com`,
   ];
 
@@ -50,7 +51,16 @@ export async function findToiShowtimeUrl(movieTitle: string, serpKey?: string): 
   return null;
 }
 
-export type ScrapedShowtime = { theatreName: string; date: string; time: string };
+function guessFormat(name: string): string {
+  if (/\b4DX\b/i.test(name)) return "4DX";
+  if (/\bIMAX\b/i.test(name)) return "IMAX";
+  if (/\bScreenX\b/i.test(name)) return "ScreenX";
+  if (/\bDolby\s*Atmos\b/i.test(name)) return "Dolby Atmos";
+  if (/\b3D\b/i.test(name)) return "3D";
+  return "2D";
+}
+
+export type ScrapedShowtime = { theatreName: string; date: string; time: string; format: string };
 
 export async function scrapeToiShowtimes(toiUrl: string): Promise<ScrapedShowtime[]> {
   const controller = new AbortController();
@@ -86,7 +96,8 @@ export async function scrapeToiShowtimes(toiUrl: string): Promise<ScrapedShowtim
 
         const date = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
         const time = `${String(dt.getHours()).padStart(2, "0")}:${String(dt.getMinutes()).padStart(2, "0")}`;
-        results.push({ theatreName: json.location.name.trim(), date, time });
+        const theatreName = json.location.name.trim();
+        results.push({ theatreName, date, time, format: guessFormat(theatreName) });
       } catch {
         // Skip invalid JSON-LD
       }
@@ -100,7 +111,7 @@ export async function scrapeToiShowtimes(toiUrl: string): Promise<ScrapedShowtim
   }
 }
 
-export async function syncMovieShowtimes(movieId: string, movieTitle: string): Promise<number> {
+export async function syncMovieShowtimes(movieId: string, movieTitle: string, movieLanguage?: string): Promise<number> {
   // Ensure Hyderabad location exists
   let location = await prisma.location.findFirst({ where: { name: CITY } });
   if (!location) {
@@ -108,7 +119,7 @@ export async function syncMovieShowtimes(movieId: string, movieTitle: string): P
   }
 
   // 1. Discover TOI showtimes URL
-  const toiUrl = await findToiShowtimeUrl(movieTitle);
+  const toiUrl = await findToiShowtimeUrl(movieTitle, movieLanguage);
   if (!toiUrl) {
     console.warn(`[showtime-sync] No TOI showtimes URL discovered for ${movieTitle}`);
     return 0;
@@ -123,11 +134,14 @@ export async function syncMovieShowtimes(movieId: string, movieTitle: string): P
 
   // 3. Persist showtimes to database
   let added = 0;
-  const format = await prisma.format.upsert({
-    where: { name: "2D" },
-    update: {},
-    create: { name: "2D" },
-  });
+  const formatCache = new Map<string, { id: string; name: string }>();
+
+  async function getOrCreateFormat(name: string) {
+    if (formatCache.has(name)) return formatCache.get(name)!;
+    const fmt = await prisma.format.upsert({ where: { name }, update: {}, create: { name } });
+    formatCache.set(name, fmt);
+    return fmt;
+  }
 
   const existingTheatres = await prisma.theatre.findMany({ where: { locationId: location.id } });
 
@@ -144,6 +158,8 @@ export async function syncMovieShowtimes(movieId: string, movieTitle: string): P
       });
       existingTheatres.push(theatre);
     }
+
+    const format = await getOrCreateFormat(item.format || "2D");
 
     const existing = await prisma.showtime.findUnique({
       where: {

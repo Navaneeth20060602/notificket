@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -79,8 +79,20 @@ export default function MovieDetailPage() {
   }, [locationId]);
 
   useEffect(() => {
-    const firstDate = movie?.showtimes?.map((showtime: any) => toInputDate(showtime.date)).sort()[0];
-    if (firstDate && !movie.showtimes.some((showtime: any) => toInputDate(showtime.date) === showtimeDate)) {
+    if (!movie) return;
+    const nowDate = todayInputDate();
+    const nowTime = new Date().toTimeString().slice(0, 5);
+    const futureDates = (movie.showtimes || [])
+      .filter((s: any) => {
+        const sd = toInputDate(s.date);
+        if (sd < nowDate) return false;
+        if (sd === nowDate && s.time <= nowTime) return false;
+        return true;
+      })
+      .map((s: any) => toInputDate(s.date))
+      .sort();
+    const firstDate = futureDates[0];
+    if (firstDate && !futureDates.includes(showtimeDate)) {
       setShowtimeDate(firstDate);
     }
   }, [movie, showtimeDate]);
@@ -118,13 +130,31 @@ export default function MovieDetailPage() {
   }
 
   if (!user || !movie) return null;
+
+  const nowDate = todayInputDate();
+  const nowTime = new Date().toTimeString().slice(0, 5);
+  const futureShowtimes = (movie.showtimes || []).filter((s: any) => {
+    const sd = toInputDate(s.date);
+    if (sd < nowDate) return false;
+    if (sd === nowDate && s.time <= nowTime) return false;
+    return true;
+  });
+  const showtimeDates: string[] = Array.from(new Set<string>(futureShowtimes.map((s: any) => toInputDate(s.date)))).sort();
+  const visibleShowtimes = futureShowtimes
+    .filter((s: any) => toInputDate(s.date) === showtimeDate)
+    .filter((s: any) => s.theatre.name.toLowerCase().includes(showtimeTheatreSearch.trim().toLowerCase()))
+    .sort((a: any, b: any) => a.time.localeCompare(b.time) || a.theatre.name.localeCompare(b.theatre.name));
+
   const filteredTheatres = theatres.filter((theatre) => theatre.name.toLowerCase().includes(theatreSearch.toLowerCase()));
   const selectedTheatreNames = theatres.filter((theatre) => theatreIds.includes(theatre.id)).map((theatre) => theatre.name);
-  const showtimeDates: string[] = Array.from(new Set<string>((movie.showtimes || []).map((showtime: any) => toInputDate(showtime.date)))).sort();
-  const visibleShowtimes = (movie.showtimes || [])
-    .filter((showtime: any) => toInputDate(showtime.date) === showtimeDate)
-    .filter((showtime: any) => showtime.theatre.name.toLowerCase().includes(showtimeTheatreSearch.trim().toLowerCase()))
-    .sort((a: any, b: any) => a.time.localeCompare(b.time) || a.theatre.name.localeCompare(b.theatre.name));
+
+  // Group visible showtimes by theatre
+  const grouped = new Map<string, { theatre: any; showtimes: any[] }>();
+  for (const s of visibleShowtimes) {
+    if (!grouped.has(s.theatre.id)) grouped.set(s.theatre.id, { theatre: s.theatre, showtimes: [] });
+    grouped.get(s.theatre.id)!.showtimes.push(s);
+  }
+  const groupedTheatres = Array.from(grouped.values());
 
   return (
     <main className="min-h-screen bg-page">
@@ -146,10 +176,10 @@ export default function MovieDetailPage() {
                 {syncing ? "Checking for latest showtimes..." : "🔄 Refresh showtimes"}
               </button>
             </div>
-            {movie.showtimes.length === 0 && (
-              <p className="text-muted text-sm">{syncing ? "Fetching showtimes..." : "No showtimes listed yet."}</p>
+            {futureShowtimes.length === 0 && (
+              <p className="text-muted text-sm">{syncing ? "Fetching showtimes..." : "No upcoming showtimes available."}</p>
             )}
-            {movie.showtimes.length > 0 && <>
+            {futureShowtimes.length > 0 && <>
               <div className="flex gap-2 overflow-x-auto pb-1" aria-label="Choose showtime date">
                 {showtimeDates.map((availableDate) => (
                   <button
@@ -171,31 +201,32 @@ export default function MovieDetailPage() {
                 aria-label="Search theatres for selected date"
               />
             </>}
-            {movie.showtimes.length > 0 && visibleShowtimes.length === 0 && (
+            {futureShowtimes.length > 0 && visibleShowtimes.length === 0 && (
               <p className="text-muted text-sm">No theatres match that search on {formatDate(showtimeDate)}.</p>
             )}
-            {visibleShowtimes.map((s: any) => (
-              <div key={s.id} className="card p-4 flex items-center justify-between">
-                <div>
-                  <p className="font-medium">{s.theatre.name}</p>
-                  <p className="text-xs text-muted">{s.theatre.location.name}</p>
+            {groupedTheatres.map(({ theatre, showtimes: times }) => (
+              <div key={theatre.id} className="card p-4">
+                <div className="mb-3">
+                  <p className="font-medium">{theatre.name}</p>
+                  <p className="text-xs text-muted">{theatre.location?.name}</p>
                 </div>
-                <div className="text-right text-sm">
-                  <p>{formatDate(s.date)} &middot; {s.time}</p>
-                  <p className="text-muted">
-                    {s.format.name}
-                    {s.price != null && ` \u00b7 \u20b9${s.price}`}
-                    {s.seatsAvailable != null && ` \u00b7 ${s.seatsAvailable} seats left`}
-                  </p>
+                <div className="flex flex-wrap gap-2">
+                  {times.map((s: any) => (
+                    <span key={s.id} className="inline-flex flex-col items-center bg-surface border border-subtle rounded-lg px-3 py-2 text-xs">
+                      <span className="font-semibold text-sm">{s.time}</span>
+                      <span className="text-muted">{s.format.name}{s.price != null ? ` · \u20b9${s.price}` : ""}</span>
+                      {s.seatsAvailable != null && <span className="text-amber-400">{s.seatsAvailable} left</span>}
+                    </span>
+                  ))}
                 </div>
               </div>
             ))}
           </div>
         ) : submitted ? (
           <div className="card p-6 mt-8">
-            <p className="font-medium">You're all set.</p>
+            <p className="font-medium">You&apos;re all set.</p>
             <p className="text-muted text-sm mt-1">
-              We'll alert you the moment matching tickets go live. Manage this anytime from{" "}
+              We&apos;ll alert you the moment matching tickets go live. Manage this anytime from{" "}
               <a href="/dashboard/requests" className="text-brand-400">My requests</a>.
             </p>
           </div>
@@ -224,7 +255,7 @@ export default function MovieDetailPage() {
                     <span className={selectedTheatreNames.length ? "truncate pr-3" : "text-muted"} title={selectedTheatreNames.join(", ")}>
                       {selectedTheatreNames.length ? selectedTheatreNames.join(", ") : "Search and select theatres"}
                     </span>
-                    <span className="text-muted">⌄</span>
+                    <span className="text-muted">&#8964;</span>
                   </button>
                   {theatreMenuOpen && <div className="absolute z-20 mt-2 w-full card p-2 shadow-2xl">
                     <input autoFocus className="input" placeholder="Search theatres in this city..." value={theatreSearch} onChange={(e) => setTheatreSearch(e.target.value)} />
