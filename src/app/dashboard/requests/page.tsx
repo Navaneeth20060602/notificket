@@ -19,6 +19,19 @@ export default function RequestsPage() {
   const [saving, setSaving] = useState(false);
   const [editError, setEditError] = useState("");
 
+  function toggle(values: string[], value: string, setValues: (values: string[]) => void) {
+    setValues(values.includes(value) ? values.filter((item) => item !== value) : [...values, value]);
+  }
+
+  function parseIds(json: string | null | undefined): string[] {
+    try {
+      const value = JSON.parse(json || "[]");
+      return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
+    } catch {
+      return [];
+    }
+  }
+
   function load() {
     fetch("/api/requests").then((r) => r.json()).then((d) => setRequests(d.requests || []));
   }
@@ -41,24 +54,59 @@ export default function RequestsPage() {
   }
 
   function startEdit(req: any) {
-    if (req.preRelease) {
-      setEditError("Pre-release requests cannot be edited.");
-      return;
-    }
     setEditError("");
     setEditingId(req.id);
-    setEditState({
-      locationId: req.locationId || "",
-      theatreId: req.theatreId || "",
-      formatId: req.formatId || "",
-      date: toInputDate(req.date),
-      timeFrom: req.timeFrom || "",
-      timeTo: req.timeTo || "",
-      maxPrice: req.maxPrice ?? "",
-    });
+    if (req.preRelease) {
+      setEditState({
+        locationId: req.locationId || "",
+        theatreIds: parseIds(req.theatreIds),
+      });
+    } else {
+      setEditState({
+        locationId: req.locationId || "",
+        theatreId: req.theatreId || "",
+        formatId: req.formatId || "",
+        date: toInputDate(req.date),
+        timeFrom: req.timeFrom || "",
+        timeTo: req.timeTo || "",
+        maxPrice: req.maxPrice ?? "",
+      });
+    }
   }
 
   async function saveEdit(id: string) {
+    if (editState.preRelease) {
+      if (!editState.locationId || !editState.theatreIds?.length) {
+        setEditError("Location and at least one theatre are required.");
+        return;
+      }
+      setSaving(true);
+      setEditError("");
+      const res = await fetch(`/api/requests/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          locationId: editState.locationId,
+          theatreIds: editState.theatreIds,
+        }),
+      });
+      setSaving(false);
+      if (!res.ok) {
+        const d = await res.json();
+        if (d.alreadyShowingTheatreIds?.length > 0) {
+          setEditState((prev: any) => ({
+            ...prev,
+            theatreIds: prev.theatreIds.filter((tid: string) => !d.alreadyShowingTheatreIds.includes(tid)),
+          }));
+        }
+        setEditError(d.error || "Couldn't save changes");
+        return;
+      }
+      setEditingId(null);
+      load();
+      return;
+    }
+
     if (!editState.locationId || !editState.theatreId) {
       setEditError("Location and theatre are required.");
       return;
@@ -141,14 +189,62 @@ export default function RequestsPage() {
                     </p>
                   </div>
                   <div className="flex gap-2 shrink-0">
-                    {!r.preRelease && (
-                      <button className="btn-secondary !py-1 !px-3 text-xs" onClick={() => startEdit(r)}>Edit</button>
-                    )}
+                    <button className="btn-secondary !py-1 !px-3 text-xs" onClick={() => startEdit(r)}>Edit</button>
                     <button className="btn-secondary !py-1 !px-3 text-xs" onClick={() => cancelRequest(r.id)}>Cancel</button>
                   </div>
                 </div>
 
-                {editingId === r.id && (
+                {editingId === r.id && r.preRelease && (
+                  <div className="mt-4 pt-4 border-t border-subtle space-y-3">
+                    <div>
+                      <label className="text-xs text-muted">Location</label>
+                      <select
+                        className="input mt-1"
+                        value={editState.locationId}
+                        onChange={(e) =>
+                          setEditState({ ...editState, locationId: e.target.value, theatreIds: [] })
+                        }
+                      >
+                        <option value="">Select a location</option>
+                        {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-xs text-muted">
+                        Theatres <span className="text-brand-400">(select one or more)</span>
+                      </label>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {theatres
+                          .filter((t) => t.locationId === editState.locationId)
+                          .map((t) => (
+                            <label key={t.id} className="card px-3 py-2 text-sm flex gap-2 items-center cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={editState.theatreIds?.includes(t.id)}
+                                onChange={() => toggle(editState.theatreIds || [], t.id, (v) => setEditState({ ...editState, theatreIds: v }))}
+                              />
+                              {t.name}
+                            </label>
+                          ))}
+                        {editState.locationId && theatres.filter((t) => t.locationId === editState.locationId).length === 0 && (
+                          <p className="text-xs text-muted">No theatres found for this location.</p>
+                        )}
+                      </div>
+                    </div>
+
+                    {editError && <p className="text-xs text-red-400">{editError}</p>}
+
+                    <div className="flex gap-2 justify-end">
+                      <button className="btn-secondary !py-1 !px-3 text-xs" onClick={() => setEditingId(null)}>Discard</button>
+                      <button className="btn-primary !py-1 !px-3 text-xs" disabled={saving} onClick={() => saveEdit(r.id)}>
+                        {saving ? "Saving..." : "Save"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {editingId === r.id && !r.preRelease && (
                   <div className="mt-4 pt-4 border-t border-subtle space-y-3">
                     <div className="grid grid-cols-2 gap-3">
                       <div>

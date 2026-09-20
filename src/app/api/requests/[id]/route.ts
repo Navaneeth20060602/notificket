@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/api-helpers";
+import { theatreIdsShowingNow } from "@/lib/pre-release";
 
 async function assertOwnership(userId: string, requestId: string) {
   const request = await prisma.request.findUnique({ where: { id: requestId } });
@@ -22,16 +23,58 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (owned.status !== "ACTIVE") {
     return NextResponse.json({ error: "Only active requests can be modified" }, { status: 400 });
   }
-  // Release alerts cover many theatres and are tied to the release-day window,
-  // so they are cancel-and-recreate only.
+  const body = await req.json();
+
   if (owned.preRelease) {
-    return NextResponse.json(
-      { error: "Release alerts can't be edited. Cancel this one and create a new alert instead." },
-      { status: 400 },
-    );
+    // Release alerts only expose location + theatre list for editing.
+    const { locationId, theatreIds } = body;
+    if (!locationId || !Array.isArray(theatreIds) || theatreIds.length === 0) {
+      return NextResponse.json({ error: "Location and at least one theatre are required" }, { status: 400 });
+    }
+    const uniqueTheatreIds = [...new Set(theatreIds as string[])];
+
+    const theatreCount = await prisma.theatre.count({ where: { id: { in: uniqueTheatreIds }, locationId } });
+    if (theatreCount !== uniqueTheatreIds.length) {
+      return NextResponse.json({ error: "Choose theatres from the selected location" }, { status: 400 });
+    }
+
+    const recentShowtimes = await prisma.showtime.findMany({
+      where: { movieId: owned.movieId, date: { gte: new Date(Date.now() - 2 * 86_400_000) } },
+      select: { theatreId: true, date: true },
+    });
+    const showingNow = theatreIdsShowingNow(recentShowtimes);
+    const alreadyShowing = uniqueTheatreIds.filter((id) => showingNow.has(id));
+    if (alreadyShowing.length > 0) {
+      const names = await prisma.theatre.findMany({ where: { id: { in: alreadyShowing } }, select: { name: true } });
+      return NextResponse.json(
+        {
+          error: `Already showing at: ${names.map((t) => t.name).join(", ")}. Pick only theatres where it hasn't released yet.`,
+          alreadyShowingTheatreIds: alreadyShowing,
+        },
+        { status: 400 },
+      );
+    }
+
+    const updated = await prisma.request.update({
+      where: { id: params.id },
+      data: {
+        locationId,
+        theatreId: uniqueTheatreIds[0],
+        theatreIds: JSON.stringify(uniqueTheatreIds),
+      },
+    });
+
+    if (locationId !== owned.locationId) {
+      await prisma.monitorJob.upsert({
+        where: { movieId_locationId: { movieId: owned.movieId, locationId } },
+        update: { status: "ACTIVE", nextCheckAt: new Date(), lastMessage: "Queued by an updated release alert." },
+        create: { movieId: owned.movieId, locationId, status: "ACTIVE", lastMessage: "Queued by an updated release alert." },
+      });
+    }
+
+    return NextResponse.json({ request: updated });
   }
 
-  const body = await req.json();
   const { locationId, theatreId, formatId, date, timeFrom, timeTo, maxPrice } = body;
 
   if (locationId === "" || theatreId === "" || date === "") {
