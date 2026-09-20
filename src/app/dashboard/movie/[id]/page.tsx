@@ -26,6 +26,7 @@ export default function MovieDetailPage() {
   const [formats, setFormats] = useState<any[]>([]);
   const [showtimeDate, setShowtimeDate] = useState("");
   const [selectedLanguage, setSelectedLanguage] = useState("");
+  const [hideCompleted, setHideCompleted] = useState(false);
   const [showtimeTheatreSearch, setShowtimeTheatreSearch] = useState("");
 
   // request form state
@@ -82,18 +83,12 @@ export default function MovieDetailPage() {
   useEffect(() => {
     if (!movie) return;
     const nowDate = todayInputDate();
-    const nowTime = new Date().toTimeString().slice(0, 5);
-    const futureDates = (movie.showtimes || [])
-      .filter((s: any) => {
-        const sd = toInputDate(s.date);
-        if (sd < nowDate) return false;
-        if (sd === nowDate && s.time <= nowTime) return false;
-        return true;
-      })
+    const validDates = (movie.showtimes || [])
+      .filter((s: any) => toInputDate(s.date) >= nowDate)
       .map((s: any) => toInputDate(s.date))
       .sort();
-    const firstDate = futureDates[0];
-    if (firstDate && !futureDates.includes(showtimeDate)) {
+    const firstDate = validDates[0];
+    if (firstDate && !validDates.includes(showtimeDate)) {
       setShowtimeDate(firstDate);
     }
   }, [movie, showtimeDate]);
@@ -134,31 +129,39 @@ export default function MovieDetailPage() {
 
   const nowDate = todayInputDate();
   const nowTime = new Date().toTimeString().slice(0, 5);
-  const futureShowtimes = (movie.showtimes || []).filter((s: any) => {
-    const sd = toInputDate(s.date);
-    if (sd < nowDate) return false;
-    if (sd === nowDate && s.time <= nowTime) return false;
-    return true;
+
+  // 1. Exclude previous day shows (only keep today and future dates)
+  const nonPastDayShowtimes = (movie.showtimes || []).filter((s: any) => {
+    return toInputDate(s.date) >= nowDate;
   });
 
-  // Extract distinct available languages across all active showtimes
+  // Extract all distinct languages available across all current showtimes
   const availableLanguages: string[] = Array.from(
     new Set<string>(
-      futureShowtimes
+      nonPastDayShowtimes
         .map((s: any) => s.language)
         .filter(Boolean)
     )
   );
 
-  const showtimeDates: string[] = Array.from(new Set<string>(futureShowtimes.map((s: any) => toInputDate(s.date)))).sort();
-  const visibleShowtimes = futureShowtimes
+  const showtimeDates: string[] = Array.from(
+    new Set<string>(nonPastDayShowtimes.map((s: any) => toInputDate(s.date)))
+  ).sort();
+
+  // Filter for the selected date and filters
+  const visibleShowtimes = nonPastDayShowtimes
     .filter((s: any) => toInputDate(s.date) === showtimeDate)
     .filter((s: any) => !selectedLanguage || s.language === selectedLanguage)
+    .filter((s: any) => !hideCompleted || (toInputDate(s.date) === nowDate ? s.time > nowTime : true))
     .filter((s: any) => s.theatre.name.toLowerCase().includes(showtimeTheatreSearch.trim().toLowerCase()))
     .sort((a: any, b: any) => a.time.localeCompare(b.time) || a.theatre.name.localeCompare(b.theatre.name));
 
-  const filteredTheatres = theatres.filter((theatre) => theatre.name.toLowerCase().includes(theatreSearch.toLowerCase()));
-  const selectedTheatreNames = theatres.filter((theatre) => theatreIds.includes(theatre.id)).map((theatre) => theatre.name);
+  const filteredTheatres = theatres.filter((theatre) =>
+    theatre.name.toLowerCase().includes(theatreSearch.toLowerCase())
+  );
+  const selectedTheatreNames = theatres
+    .filter((theatre) => theatreIds.includes(theatre.id))
+    .map((theatre) => theatre.name);
 
   // Group visible showtimes by theatre
   const grouped = new Map<string, { theatre: any; showtimes: any[] }>();
@@ -175,101 +178,161 @@ export default function MovieDetailPage() {
         <h1 className="text-2xl font-semibold">{movie.title}</h1>
         <p className="text-muted text-sm mt-1">
           {movie.language}
-          {availableLanguages.length > 0 && availableLanguages.some((l) => l !== movie.language)
-            ? ` · Available in: ${availableLanguages.join(", ")}`
-            : ""}
+          {availableLanguages.length > 0 &&
+            ` · Available in: ${Array.from(new Set([movie.language, ...availableLanguages])).join(", ")}`}
           &middot; {movie.status === "RUNNING" ? "Now showing" : "Upcoming"}
         </p>
 
         {movie.status === "RUNNING" ? (
           <div className="mt-8 space-y-3">
             <div className="flex items-center justify-between mb-2">
-              <h2 className="text-lg font-medium">Showtimes</h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg font-medium">Showtimes</h2>
+                <span className="text-xs text-muted">
+                  ({groupedTheatres.length} {groupedTheatres.length === 1 ? "theatre" : "theatres"} showing)
+                </span>
+              </div>
               <button
                 type="button"
                 onClick={() => loadMovie(true)}
                 disabled={syncing}
                 className="text-xs text-brand-400 hover:text-brand-300 disabled:text-muted transition-colors flex items-center gap-1"
               >
-                {syncing ? "Checking for latest showtimes..." : "🔄 Refresh showtimes"}
+                {syncing ? "Refreshing showtimes..." : "🔄 Refresh showtimes"}
               </button>
             </div>
-            {futureShowtimes.length === 0 && (
-              <p className="text-muted text-sm">{syncing ? "Fetching showtimes..." : "No upcoming showtimes available."}</p>
-            )}
-            {futureShowtimes.length > 0 && <>
-              {/* Date tabs */}
-              <div className="flex gap-2 overflow-x-auto pb-1" aria-label="Choose showtime date">
-                {showtimeDates.map((availableDate) => (
-                  <button
-                    key={availableDate}
-                    type="button"
-                    onClick={() => setShowtimeDate(availableDate)}
-                    className={showtimeDate === availableDate ? "btn-primary whitespace-nowrap px-4 py-2 text-sm" : "card whitespace-nowrap px-4 py-2 text-sm hover:border-brand-400"}
-                  >
-                    {formatDate(availableDate)}
-                  </button>
-                ))}
-              </div>
 
-              {/* Language filter pills if multi-language */}
-              {availableLanguages.length > 1 && (
-                <div className="flex gap-2 overflow-x-auto py-1" aria-label="Filter by language">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedLanguage("")}
-                    className={selectedLanguage === "" ? "btn-primary !py-1 px-3 text-xs" : "card !py-1 px-3 text-xs hover:border-brand-400"}
-                  >
-                    All Languages
-                  </button>
-                  {availableLanguages.map((lang) => (
+            {nonPastDayShowtimes.length === 0 && (
+              <p className="text-muted text-sm">
+                {syncing ? "Fetching showtimes across all theatres..." : "No showtimes listed yet."}
+              </p>
+            )}
+
+            {nonPastDayShowtimes.length > 0 && (
+              <>
+                {/* Date selection tabs */}
+                <div className="flex gap-2 overflow-x-auto pb-1" aria-label="Choose showtime date">
+                  {showtimeDates.map((availableDate) => (
                     <button
-                      key={lang}
+                      key={availableDate}
                       type="button"
-                      onClick={() => setSelectedLanguage(lang)}
-                      className={selectedLanguage === lang ? "btn-primary !py-1 px-3 text-xs" : "card !py-1 px-3 text-xs hover:border-brand-400"}
+                      onClick={() => setShowtimeDate(availableDate)}
+                      className={
+                        showtimeDate === availableDate
+                          ? "btn-primary whitespace-nowrap px-4 py-2 text-sm"
+                          : "card whitespace-nowrap px-4 py-2 text-sm hover:border-brand-400"
+                      }
                     >
-                      {lang}
+                      {formatDate(availableDate)}
                     </button>
                   ))}
                 </div>
-              )}
 
-              <input
-                type="search"
-                className="input"
-                value={showtimeTheatreSearch}
-                onChange={(e) => setShowtimeTheatreSearch(e.target.value)}
-                placeholder="Search theatres for the selected date..."
-                aria-label="Search theatres for selected date"
-              />
-            </>}
-            {futureShowtimes.length > 0 && visibleShowtimes.length === 0 && (
+                {/* Multilingual filter tabs if multiple languages */}
+                {availableLanguages.length > 1 && (
+                  <div className="flex items-center gap-2 overflow-x-auto py-1" aria-label="Filter by language">
+                    <span className="text-xs text-muted font-medium">Language:</span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedLanguage("")}
+                      className={
+                        selectedLanguage === ""
+                          ? "btn-primary !py-1 px-3 text-xs"
+                          : "card !py-1 px-3 text-xs hover:border-brand-400"
+                      }
+                    >
+                      All
+                    </button>
+                    {availableLanguages.map((lang) => (
+                      <button
+                        key={lang}
+                        type="button"
+                        onClick={() => setSelectedLanguage(lang)}
+                        className={
+                          selectedLanguage === lang
+                            ? "btn-primary !py-1 px-3 text-xs"
+                            : "card !py-1 px-3 text-xs hover:border-brand-400"
+                        }
+                      >
+                        {lang}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Search bar + Completed shows toggle */}
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <input
+                    type="search"
+                    className="input flex-1"
+                    value={showtimeTheatreSearch}
+                    onChange={(e) => setShowtimeTheatreSearch(e.target.value)}
+                    placeholder="Search theatres for the selected date..."
+                    aria-label="Search theatres for selected date"
+                  />
+                  {showtimeDate === nowDate && (
+                    <label className="flex items-center gap-2 text-xs text-muted cursor-pointer select-none shrink-0 px-1">
+                      <input
+                        type="checkbox"
+                        checked={hideCompleted}
+                        onChange={(e) => setHideCompleted(e.target.checked)}
+                        className="rounded"
+                      />
+                      Hide completed shows
+                    </label>
+                  )}
+                </div>
+              </>
+            )}
+
+            {nonPastDayShowtimes.length > 0 && visibleShowtimes.length === 0 && (
               <p className="text-muted text-sm">
-                No theatres match that search on {formatDate(showtimeDate)}
+                No theatres match that filter on {formatDate(showtimeDate)}
                 {selectedLanguage ? ` for ${selectedLanguage}` : ""}.
               </p>
             )}
+
             {groupedTheatres.map(({ theatre, showtimes: times }) => (
               <div key={theatre.id} className="card p-4">
-                <div className="mb-3">
-                  <p className="font-medium">{theatre.name}</p>
-                  <p className="text-xs text-muted">{theatre.location?.name}</p>
+                <div className="mb-3 flex items-start justify-between">
+                  <div>
+                    <p className="font-medium">{theatre.name}</p>
+                    <p className="text-xs text-muted">{theatre.location?.name}</p>
+                  </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  {times.map((s: any) => (
-                    <span key={s.id} className="inline-flex flex-col items-center bg-surface border border-subtle rounded-lg px-3 py-2 text-xs">
-                      <span className="font-semibold text-sm">{s.time}</span>
-                      <span className="text-muted">
-                        {s.language ? (
-                          <span className="text-brand-300 font-medium">{s.language} · </span>
+                  {times.map((s: any) => {
+                    const isEnded = toInputDate(s.date) === nowDate && s.time <= nowTime;
+                    return (
+                      <span
+                        key={s.id}
+                        className={`inline-flex flex-col items-center border rounded-lg px-3 py-2 text-xs transition-opacity ${
+                          isEnded
+                            ? "bg-surface/40 border-subtle/50 opacity-40"
+                            : "bg-surface border-subtle hover:border-brand-400"
+                        }`}
+                        title={isEnded ? "This show has already started or ended" : "Upcoming show"}
+                      >
+                        <span className={`font-semibold text-sm ${isEnded ? "line-through text-muted" : ""}`}>
+                          {s.time}
+                        </span>
+                        <span className="text-muted text-[11px] mt-0.5">
+                          {s.language ? (
+                            <span className="text-brand-300 font-medium">{s.language} · </span>
+                          ) : null}
+                          {s.format.name}
+                          {s.price != null ? ` · ₹${s.price}` : ""}
+                        </span>
+                        {isEnded ? (
+                          <span className="text-[10px] text-muted">Ended</span>
+                        ) : s.seatsAvailable != null ? (
+                          <span className="text-[10px] text-amber-400 font-medium">
+                            {s.seatsAvailable} left
+                          </span>
                         ) : null}
-                        {s.format.name}
-                        {s.price != null ? ` · ₹${s.price}` : ""}
                       </span>
-                      {s.seatsAvailable != null && <span className="text-amber-400">{s.seatsAvailable} left</span>}
-                    </span>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             ))}
@@ -279,7 +342,10 @@ export default function MovieDetailPage() {
             <p className="font-medium">You&apos;re all set.</p>
             <p className="text-muted text-sm mt-1">
               We&apos;ll alert you the moment matching tickets go live. Manage this anytime from{" "}
-              <a href="/dashboard/requests" className="text-brand-400">My requests</a>.
+              <a href="/dashboard/requests" className="text-brand-400">
+                My requests
+              </a>
+              .
             </p>
           </div>
         ) : (
@@ -291,44 +357,120 @@ export default function MovieDetailPage() {
 
             <div>
               <label className="text-sm text-muted">Location</label>
-              <select className="input mt-1" required value={locationId} onChange={(e) => { setLocationId(e.target.value); setTheatreIds([]); setTheatreSearch(""); }}>
+              <select
+                className="input mt-1"
+                required
+                value={locationId}
+                onChange={(e) => {
+                  setLocationId(e.target.value);
+                  setTheatreIds([]);
+                  setTheatreSearch("");
+                }}
+              >
                 <option value="">Select a city</option>
-                {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                {locations.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.name}
+                  </option>
+                ))}
               </select>
             </div>
 
             <div>
-              <label className="text-sm text-muted">Theatres <span className="text-brand-400">(select one or more)</span></label>
+              <label className="text-sm text-muted">
+                Theatres <span className="text-brand-400">(select one or more)</span>
+              </label>
               {!locationId ? (
                 <div className="input mt-1 text-muted cursor-not-allowed">Select a city first</div>
               ) : (
                 <div className="relative mt-1">
-                  <button type="button" className="input text-left flex items-center justify-between" onClick={() => setTheatreMenuOpen(!theatreMenuOpen)} aria-expanded={theatreMenuOpen}>
-                    <span className={selectedTheatreNames.length ? "truncate pr-3" : "text-muted"} title={selectedTheatreNames.join(", ")}>
+                  <button
+                    type="button"
+                    className="input text-left flex items-center justify-between"
+                    onClick={() => setTheatreMenuOpen(!theatreMenuOpen)}
+                    aria-expanded={theatreMenuOpen}
+                  >
+                    <span
+                      className={selectedTheatreNames.length ? "truncate pr-3" : "text-muted"}
+                      title={selectedTheatreNames.join(", ")}
+                    >
                       {selectedTheatreNames.length ? selectedTheatreNames.join(", ") : "Search and select theatres"}
                     </span>
                     <span className="text-muted">&#8964;</span>
                   </button>
-                  {theatreMenuOpen && <div className="absolute z-20 mt-2 w-full card p-2 shadow-2xl">
-                    <input autoFocus className="input" placeholder="Search theatres in this city..." value={theatreSearch} onChange={(e) => setTheatreSearch(e.target.value)} />
-                    <div className="max-h-56 overflow-y-auto mt-2 space-y-1">
-                      {filteredTheatres.map((theatre) => <label key={theatre.id} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm hover:bg-surface cursor-pointer"><input type="checkbox" checked={theatreIds.includes(theatre.id)} onChange={() => toggle(theatreIds, theatre.id, setTheatreIds)} />{theatre.name}</label>)}
-                      {filteredTheatres.length === 0 && <p className="px-3 py-2 text-sm text-muted">No theatres match that search.</p>}
+                  {theatreMenuOpen && (
+                    <div className="absolute z-20 mt-2 w-full card p-2 shadow-2xl">
+                      <input
+                        autoFocus
+                        className="input"
+                        placeholder="Search theatres in this city..."
+                        value={theatreSearch}
+                        onChange={(e) => setTheatreSearch(e.target.value)}
+                      />
+                      <div className="max-h-56 overflow-y-auto mt-2 space-y-1">
+                        {filteredTheatres.map((theatre) => (
+                          <label
+                            key={theatre.id}
+                            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm hover:bg-surface cursor-pointer"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={theatreIds.includes(theatre.id)}
+                              onChange={() => toggle(theatreIds, theatre.id, setTheatreIds)}
+                            />
+                            {theatre.name}
+                          </label>
+                        ))}
+                        {filteredTheatres.length === 0 && (
+                          <p className="px-3 py-2 text-sm text-muted">No theatres match that search.</p>
+                        )}
+                      </div>
+                      <div className="border-t border-subtle mt-2 pt-2 flex items-center justify-between">
+                        <span className="text-xs text-muted">{theatreIds.length} selected</span>
+                        <button type="button" className="text-xs text-brand-400" onClick={() => setTheatreMenuOpen(false)}>
+                          Done
+                        </button>
+                      </div>
                     </div>
-                    <div className="border-t border-subtle mt-2 pt-2 flex items-center justify-between"><span className="text-xs text-muted">{theatreIds.length} selected</span><button type="button" className="text-xs text-brand-400" onClick={() => setTheatreMenuOpen(false)}>Done</button></div>
-                  </div>}
+                  )}
                 </div>
               )}
             </div>
 
             <div>
-              <label className="text-sm text-muted">Formats <span className="text-brand-400">(select one or more)</span></label>
-              <div className="mt-2 flex flex-wrap gap-2">{formats.map((f) => <label key={f.id} className="card px-3 py-2 text-sm flex gap-2 items-center cursor-pointer"><input type="checkbox" checked={formatIds.includes(f.id)} onChange={() => toggle(formatIds, f.id, setFormatIds)} />{f.name}</label>)}</div>
+              <label className="text-sm text-muted">
+                Formats <span className="text-brand-400">(select one or more)</span>
+              </label>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {formats.map((f) => (
+                  <label key={f.id} className="card px-3 py-2 text-sm flex gap-2 items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formatIds.includes(f.id)}
+                      onChange={() => toggle(formatIds, f.id, setFormatIds)}
+                    />
+                    {f.name}
+                  </label>
+                ))}
+              </div>
             </div>
 
             <div>
-              <label className="text-sm text-muted">Languages <span className="text-brand-400">(select one or more)</span></label>
-              <div className="mt-2 flex flex-wrap gap-2">{["Telugu", "Hindi", "English", "Tamil", "Kannada", "Malayalam", "Marathi", "Bengali"].map((language) => <label key={language} className="card px-3 py-2 text-sm flex gap-2 items-center cursor-pointer"><input type="checkbox" checked={languages.includes(language)} onChange={() => toggle(languages, language, setLanguages)} />{language}</label>)}</div>
+              <label className="text-sm text-muted">
+                Languages <span className="text-brand-400">(select one or more)</span>
+              </label>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {["Telugu", "Hindi", "English", "Tamil", "Kannada", "Malayalam", "Marathi", "Bengali"].map((language) => (
+                  <label key={language} className="card px-3 py-2 text-sm flex gap-2 items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={languages.includes(language)}
+                      onChange={() => toggle(languages, language, setLanguages)}
+                    />
+                    {language}
+                  </label>
+                ))}
+              </div>
             </div>
 
             <div>
@@ -351,26 +493,43 @@ export default function MovieDetailPage() {
                 <label className="text-sm text-muted">Time from</label>
                 <select className="input mt-1" value={timeFrom} onChange={(e) => setTimeFrom(e.target.value)}>
                   <option value="">Any time</option>
-                  {TIME_OPTIONS.map((time) => <option key={time.value} value={time.value}>{time.label}</option>)}
+                  {TIME_OPTIONS.map((time) => (
+                    <option key={time.value} value={time.value}>
+                      {time.label}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div>
                 <label className="text-sm text-muted">Time to</label>
                 <select className="input mt-1" value={timeTo} onChange={(e) => setTimeTo(e.target.value)}>
                   <option value="">Any time</option>
-                  {TIME_OPTIONS.map((time) => <option key={time.value} value={time.value}>{time.label}</option>)}
+                  {TIME_OPTIONS.map((time) => (
+                    <option key={time.value} value={time.value}>
+                      {time.label}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>
 
             <div>
               <label className="text-sm text-muted">Max price</label>
-              <input type="number" className="input mt-1" value={maxPrice} onChange={(e) => setMaxPrice(e.target.value)} min={0} />
+              <input
+                type="number"
+                className="input mt-1"
+                value={maxPrice}
+                onChange={(e) => setMaxPrice(e.target.value)}
+                min={0}
+              />
             </div>
 
             {error && <p className="text-sm text-red-400">{error}</p>}
 
-            <button className="btn-primary w-full" disabled={submitting || !locationId || !date || !theatreIds.length || !formatIds.length || !languages.length}>
+            <button
+              className="btn-primary w-full"
+              disabled={submitting || !locationId || !date || !theatreIds.length || !formatIds.length || !languages.length}
+            >
               {submitting ? "Saving..." : "Alert me when tickets are live"}
             </button>
           </form>

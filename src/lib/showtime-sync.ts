@@ -9,7 +9,17 @@ const USER_AGENT =
 
 const DEFAULT_SERP_KEY = "gt_live_553d3b6148d2d13e60d97ef9b5d5019630712fd1";
 
-function parseTo12hTo24h(timeStr: string): string | null {
+export type ScrapedShowtime = {
+  theatreName: string;
+  date: string;
+  time: string;
+  format: string;
+  language: string | null;
+  price?: number | null;
+  seatsAvailable?: number | null;
+};
+
+function parseTo24h(timeStr: string): string | null {
   const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
   if (!match) return null;
   let hour = parseInt(match[1], 10);
@@ -20,99 +30,174 @@ function parseTo12hTo24h(timeStr: string): string | null {
   return `${String(hour).padStart(2, "0")}:${min}`;
 }
 
-function extractLanguageFromUrl(url: string): string | null {
-  const match = url.match(/\/entertainment\/([a-z]+)\/movie-details\//i);
-  if (!match) return null;
-  const slug = match[1].toLowerCase();
-  const map: Record<string, string> = {
-    telugu: "Telugu",
-    hindi: "Hindi",
-    english: "English",
-    tamil: "Tamil",
-    kannada: "Kannada",
-    malayalam: "Malayalam",
-    marathi: "Marathi",
-    bengali: "Bengali",
-  };
-  return map[slug] || null;
+function extractLanguageFromUrlOrText(str: string): string | null {
+  const lMatch = str.match(/\b(Telugu|Hindi|English|Tamil|Kannada|Malayalam|Marathi|Bengali)\b/i);
+  if (lMatch) return lMatch[1];
+  return null;
 }
 
-export async function findToiShowtimeUrls(
-  movieTitle: string,
-  movieLanguage?: string,
-  serpKey?: string,
-): Promise<string[]> {
-  const key = serpKey || process.env.SERP_SEARCH_API_KEY || DEFAULT_SERP_KEY;
-  const queries = [
-    `${movieTitle} movie show time in ${CITY}`,
-    ...(movieLanguage ? [`${movieTitle} ${movieLanguage} movie showtimes ${CITY}`] : []),
-    ...(movieLanguage !== "Telugu" ? [`${movieTitle} Telugu movie showtimes ${CITY}`] : []),
-    `${movieTitle} movie showtimes ${CITY} site:timesofindia.indiatimes.com`,
-  ];
+// 1. Scrape BookMyShow via Jina Reader (bypasses Cloudflare cleanly without browser)
+export async function scrapeBmsViaJina(
+  buyticketsUrl: string,
+  detectedLanguage?: string | null,
+): Promise<ScrapedShowtime[]> {
+  try {
+    const today = new Date();
+    const yyyy = today.getFullYear();
+    const mm = String(today.getMonth() + 1).padStart(2, "0");
+    const dd = String(today.getDate()).padStart(2, "0");
+    const todayDash = `${yyyy}-${mm}-${dd}`;
 
-  const foundUrls: string[] = [];
-
-  for (const query of queries) {
-    const params = new URLSearchParams({
-      query,
-      location: `${CITY}, Telangana, India`,
-      gl: "in",
-      hl: "en",
-    });
+    const jinaUrl = `https://r.jina.ai/${buyticketsUrl}`;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 20_000);
-    try {
-      const res = await fetch(`https://api.serpsearch.com/api/v1/search?${params}`, {
-        headers: { Authorization: `Bearer ${key}` },
-        cache: "no-store",
-        signal: controller.signal,
-      });
-      if (!res.ok) continue;
-      const data = (await res.json()) as { organic_results?: { url?: string }[] };
-      const organic = data.organic_results || [];
-      for (const r of organic) {
-        if (
-          r.url?.includes("timesofindia.indiatimes.com") &&
-          r.url?.includes("movie-showtimes") &&
-          r.url?.toLowerCase().includes(TOI_CITY_SLUG)
-        ) {
-          if (!foundUrls.includes(r.url)) {
-            foundUrls.push(r.url);
-          }
+
+    const res = await fetch(jinaUrl, {
+      headers: { Accept: "text/plain" },
+      cache: "no-store",
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timeout));
+
+    if (!res.ok) return [];
+    const text = await res.text();
+    const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+
+    const results: ScrapedShowtime[] = [];
+    let currentCinema = null;
+    let currentFormat = "2D";
+    const timeRegex = /^(?:0?[1-9]|1[0-2]):[0-5]\d\s*(?:AM|PM)$/i;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (line.includes("bookmyshow.com/cinemas/hyderabad/")) {
+        const nextLine = lines[i + 1]
+          ? lines[i + 1]
+              .replace(/!\[Image[^\]]*\]/g, "")
+              .replace(/\([^)]+\)/g, "")
+              .trim()
+          : "";
+        if (nextLine && !nextLine.startsWith("http") && !nextLine.startsWith("!")) {
+          currentCinema = nextLine;
+          currentFormat = "2D";
+          if (/\bIMAX\b/i.test(currentCinema)) currentFormat = "IMAX";
+          else if (/\b4DX\b/i.test(currentCinema)) currentFormat = "4DX";
+          else if (/\bATMOS\b/i.test(currentCinema) || /\bDolby\b/i.test(currentCinema))
+            currentFormat = "Dolby Atmos";
+        }
+      } else if (timeRegex.test(line) && currentCinema) {
+        const time24 = parseTo24h(line);
+        let fmt = currentFormat;
+        const next = lines[i + 1] || "";
+        if (/\bIMAX\b/i.test(next)) fmt = "IMAX";
+        else if (/\b4DX\b/i.test(next)) fmt = "4DX";
+        else if (/\bATMOS\b/i.test(next) || /\bDolby\b/i.test(next)) fmt = "Dolby Atmos";
+        else if (/\b3D\b/i.test(next)) fmt = "3D";
+
+        if (time24) {
+          results.push({
+            theatreName: currentCinema,
+            date: todayDash,
+            time: time24,
+            format: fmt,
+            language: detectedLanguage || null,
+          });
         }
       }
-      if (foundUrls.length >= 3) break;
-    } catch {
-      // Continue to next query
-    } finally {
-      clearTimeout(timeout);
     }
+    return results;
+  } catch (err) {
+    console.warn("[showtime-sync] BMS Jina scrape failed:", err);
+    return [];
   }
-  return foundUrls;
 }
 
-// Kept for backward compatibility
-export async function findToiShowtimeUrl(
-  movieTitle: string,
-  movieLanguage?: string,
-  serpKey?: string,
-): Promise<string | null> {
-  const urls = await findToiShowtimeUrls(movieTitle, movieLanguage, serpKey);
-  return urls[0] || null;
-}
-
-export type ScrapedShowtime = {
-  theatreName: string;
-  date: string;
-  time: string;
-  format: string;
-  language: string | null;
-};
-
-export async function scrapeToiShowtimes(toiUrl: string, fallbackLang?: string): Promise<ScrapedShowtime[]> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 25_000);
+// 2. Scrape District.in via server-rendered __NEXT_DATA__
+export async function scrapeDistrictShowtimes(
+  districtUrl: string,
+  fallbackLang?: string | null,
+): Promise<ScrapedShowtime[]> {
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20_000);
+
+    const res = await fetch(districtUrl, {
+      headers: {
+        "User-Agent": USER_AGENT,
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+      cache: "no-store",
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timeout));
+
+    if (!res.ok) return [];
+    const html = await res.text();
+    const match = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
+    if (!match) return [];
+    const data = JSON.parse(match[1]);
+
+    const mdp = data.props?.pageProps?.initialState?.mdpV2;
+    const movieObj = (Object.values(mdp?.movieData || {})[0] as any)?.movie;
+    const movieLangs = movieObj?.languages || (movieObj?.primary_language ? [movieObj.primary_language] : []);
+    const defaultLang = fallbackLang || movieLangs[0] || null;
+
+    const cinemas: any[] = [];
+    function findCinemas(obj: any) {
+      if (!obj || typeof obj !== "object") return;
+      if (obj.entityName && Array.isArray(obj.sessions) && obj.sessions.length > 0) {
+        cinemas.push(obj);
+      }
+      for (const k of Object.keys(obj)) findCinemas(obj[k]);
+    }
+    findCinemas(data);
+
+    const results: ScrapedShowtime[] = [];
+    const seen = new Set<string>();
+
+    for (const c of cinemas) {
+      const theatreName = (c.entityName as string).replace(/\s+/g, " ").trim();
+      for (const s of c.sessions) {
+        if (!s.showTime || s.showTime.length < 16) continue;
+        const date = s.showTime.slice(0, 10);
+        const time = s.showTime.slice(11, 16);
+        let format = s.scrnFmt || "2D";
+        if (/\bIMAX\b/i.test(theatreName)) format = "IMAX";
+        else if (/\b4DX\b/i.test(theatreName)) format = "4DX";
+        else if (/\bDolby\b/i.test(theatreName)) format = "Dolby Atmos";
+
+        const minPrice = s.areas?.length ? Math.min(...s.areas.map((a: any) => a.price).filter(Boolean)) : null;
+        const seatsAvailable = s.avail ?? null;
+
+        const key = `${theatreName}|${date}|${time}|${format}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          results.push({
+            theatreName,
+            date,
+            time,
+            format,
+            language: defaultLang,
+            price: minPrice,
+            seatsAvailable,
+          });
+        }
+      }
+    }
+    return results;
+  } catch (err) {
+    console.warn("[showtime-sync] District scrape failed:", err);
+    return [];
+  }
+}
+
+// 3. Scrape Times of India HTML body + JSON-LD
+export async function scrapeToiShowtimes(
+  toiUrl: string,
+  fallbackLang?: string | null,
+): Promise<ScrapedShowtime[]> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20_000);
+
     const res = await fetch(toiUrl, {
       headers: {
         "User-Agent": USER_AGENT,
@@ -121,11 +206,12 @@ export async function scrapeToiShowtimes(toiUrl: string, fallbackLang?: string):
       },
       cache: "no-store",
       signal: controller.signal,
-    });
+    }).finally(() => clearTimeout(timeout));
+
     if (!res.ok) return [];
     const html = await res.text();
 
-    const urlLang = extractLanguageFromUrl(toiUrl) || fallbackLang || null;
+    const urlLang = extractLanguageFromUrlOrText(toiUrl) || fallbackLang || null;
     let pageDate = new Date().toISOString().slice(0, 10);
     const jsonLdDate = html.match(/"startDate"\s*:\s*"(\d{4}-\d{2}-\d{2})/)?.[1];
     if (jsonLdDate) pageDate = jsonLdDate;
@@ -133,7 +219,6 @@ export async function scrapeToiShowtimes(toiUrl: string, fallbackLang?: string):
     const results: ScrapedShowtime[] = [];
     const seen = new Set<string>();
 
-    // 1. Primary: Parse all <div class="trObj"> blocks from HTML body
     const trRegex = /<div class="trObj">([\s\S]*?)<\/div><\/div>/gi;
     let match: RegExpExecArray | null;
 
@@ -147,8 +232,8 @@ export async function scrapeToiShowtimes(toiUrl: string, fallbackLang?: string):
       const langFmt = smallMatch ? smallMatch[1].trim() : "";
 
       let language = urlLang;
-      const lMatch = langFmt.match(/\b(Telugu|Hindi|English|Tamil|Kannada|Malayalam|Marathi|Bengali)\b/i);
-      if (lMatch) language = lMatch[1];
+      const lMatch = extractLanguageFromUrlOrText(langFmt);
+      if (lMatch) language = lMatch;
 
       let format = "2D";
       if (/\bIMAX\b/i.test(langFmt) || /\bIMAX\b/i.test(theatreName)) format = "IMAX";
@@ -160,7 +245,7 @@ export async function scrapeToiShowtimes(toiUrl: string, fallbackLang?: string):
       const timeRegex = /<(?:span|a)[^>]*class="[^"]*timing_box[^"]*"[^>]*>([^<]+)<\/(?:span|a)>/gi;
       let tMatch: RegExpExecArray | null;
       while ((tMatch = timeRegex.exec(block)) !== null) {
-        const time24 = parseTo12hTo24h(tMatch[1]);
+        const time24 = parseTo24h(tMatch[1]);
         if (time24) {
           const key = `${theatreName}|${pageDate}|${time24}|${format}|${language}`;
           if (!seen.has(key)) {
@@ -170,65 +255,115 @@ export async function scrapeToiShowtimes(toiUrl: string, fallbackLang?: string):
         }
       }
     }
-
-    // 2. Fallback: Parse JSON-LD events if trObj gave 0 results
-    if (results.length === 0) {
-      const scriptPattern = /<script type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi;
-      let sMatch: RegExpExecArray | null;
-      while ((sMatch = scriptPattern.exec(html)) !== null) {
-        try {
-          const json = JSON.parse(sMatch[1]) as {
-            "@type"?: string;
-            startDate?: string;
-            location?: { name?: string };
-          };
-          if (json["@type"] !== "Event" || !json.startDate || !json.location?.name) continue;
-
-          const dt = new Date(json.startDate);
-          if (Number.isNaN(dt.valueOf())) continue;
-
-          const date = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
-          const time = `${String(dt.getHours()).padStart(2, "0")}:${String(dt.getMinutes()).padStart(2, "0")}`;
-          const theatreName = json.location.name.trim();
-
-          let format = "2D";
-          if (/\bIMAX\b/i.test(theatreName)) format = "IMAX";
-          else if (/\b4DX\b/i.test(theatreName)) format = "4DX";
-          else if (/\b3D\b/i.test(theatreName)) format = "3D";
-
-          const key = `${theatreName}|${date}|${time}|${format}|${urlLang}`;
-          if (!seen.has(key)) {
-            seen.add(key);
-            results.push({ theatreName, date, time, format, language: urlLang });
-          }
-        } catch {}
-      }
-    }
-
     return results;
   } catch (err) {
-    console.warn("[showtime-sync] Failed to scrape TOI showtimes:", err);
+    console.warn("[showtime-sync] TOI scrape failed:", err);
     return [];
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
+// Unified multi-source sync engine
 export async function syncMovieShowtimes(
   movieId: string,
   movieTitle: string,
   movieLanguage?: string,
 ): Promise<number> {
-  // Ensure Hyderabad location exists
   let location = await prisma.location.findFirst({ where: { name: CITY } });
   if (!location) {
     location = await prisma.location.create({ data: { name: CITY } });
   }
 
-  // 1. Discover all TOI showtimes URLs (could be multiple languages)
-  const toiUrls = await findToiShowtimeUrls(movieTitle, movieLanguage);
-  if (toiUrls.length === 0) {
-    console.warn(`[showtime-sync] No TOI showtimes URL discovered for ${movieTitle}`);
+  const key = process.env.SERP_SEARCH_API_KEY || DEFAULT_SERP_KEY;
+  const queries = [
+    `${movieTitle} movie show time in ${CITY}`,
+    ...(movieLanguage ? [`${movieTitle} ${movieLanguage} movie showtimes ${CITY}`] : []),
+    ...(movieLanguage !== "Telugu" ? [`${movieTitle} Telugu movie showtimes ${CITY}`] : []),
+  ];
+
+  const bmsUrls: { url: string; language: string | null }[] = [];
+  const districtUrls: string[] = [];
+  const toiUrls: string[] = [];
+
+  const today = new Date();
+  const yyyy = today.getFullYear();
+  const mm = String(today.getMonth() + 1).padStart(2, "0");
+  const dd = String(today.getDate()).padStart(2, "0");
+  const dateCompact = `${yyyy}${mm}${dd}`;
+
+  for (const query of queries) {
+    const params = new URLSearchParams({
+      query,
+      location: `${CITY}, Telangana, India`,
+      gl: "in",
+      hl: "en",
+    });
+    try {
+      const res = await fetch(`https://api.serpsearch.com/api/v1/search?${params}`, {
+        headers: { Authorization: `Bearer ${key}` },
+        cache: "no-store",
+      });
+      if (!res.ok) continue;
+      const data = (await res.json()) as {
+        organic_results?: { title?: string; url?: string; snippet?: string; description?: string }[];
+      };
+      for (const r of data.organic_results || []) {
+        if (!r.url) continue;
+
+        // BookMyShow match: extract ET code and language
+        if (r.url.includes("in.bookmyshow.com/movies/hyderabad/")) {
+          const etMatch = r.url.match(/\/movies\/hyderabad\/([a-zA-Z0-9-]+)\/(ET[0-9]+)/);
+          if (etMatch) {
+            const slug = etMatch[1];
+            const etCode = etMatch[2];
+            const buyticketsUrl = `https://in.bookmyshow.com/movies/hyderabad/${slug}/buytickets/${etCode}/${dateCompact}`;
+            const combinedText = `${r.title || ""} ${r.snippet || ""} ${r.description || ""}`;
+            const lang = extractLanguageFromUrlOrText(combinedText) || movieLanguage || null;
+            if (!bmsUrls.some((b) => b.url === buyticketsUrl)) {
+              bmsUrls.push({ url: buyticketsUrl, language: lang });
+            }
+          }
+        }
+
+        // District.in match
+        if (r.url.includes("district.in/movies/") && !districtUrls.includes(r.url)) {
+          districtUrls.push(r.url);
+        }
+
+        // Times of India match
+        if (
+          r.url.includes("timesofindia.indiatimes.com") &&
+          r.url.includes("movie-showtimes") &&
+          r.url.toLowerCase().includes(TOI_CITY_SLUG) &&
+          !toiUrls.includes(r.url)
+        ) {
+          toiUrls.push(r.url);
+        }
+      }
+    } catch {
+      // Continue to next query
+    }
+  }
+
+  // Scrape across all discovered sources concurrently
+  const scrapedAll: ScrapedShowtime[] = [];
+
+  for (const bms of bmsUrls) {
+    const shows = await scrapeBmsViaJina(bms.url, bms.language);
+    scrapedAll.push(...shows);
+  }
+
+  for (const distUrl of districtUrls) {
+    const shows = await scrapeDistrictShowtimes(distUrl, movieLanguage);
+    scrapedAll.push(...shows);
+  }
+
+  for (const toiUrl of toiUrls) {
+    const shows = await scrapeToiShowtimes(toiUrl, movieLanguage);
+    scrapedAll.push(...shows);
+  }
+
+  if (scrapedAll.length === 0) {
+    console.log(`[showtime-sync] ${movieTitle}: no showtimes found across BMS, District, or TOI`);
     return 0;
   }
 
@@ -244,71 +379,73 @@ export async function syncMovieShowtimes(
 
   const existingTheatres = await prisma.theatre.findMany({ where: { locationId: location.id } });
 
-  for (const toiUrl of toiUrls) {
-    const showtimes = await scrapeToiShowtimes(toiUrl, movieLanguage);
-    if (showtimes.length === 0) continue;
+  for (const item of scrapedAll) {
+    const date = new Date(`${item.date}T00:00:00`);
+    if (!/^\d{2}:\d{2}$/.test(item.time) || Number.isNaN(date.valueOf())) continue;
 
-    for (const item of showtimes) {
-      const date = new Date(`${item.date}T00:00:00`);
-      if (!/^\d{2}:\d{2}$/.test(item.time) || Number.isNaN(date.valueOf())) continue;
+    let theatre = existingTheatres.find(
+      (t) => normalizeName(t.name) === normalizeName(item.theatreName),
+    );
+    if (!theatre) {
+      theatre = await prisma.theatre.create({
+        data: { name: item.theatreName, locationId: location.id },
+      });
+      existingTheatres.push(theatre);
+    }
 
-      let theatre = existingTheatres.find(
-        (t) => normalizeName(t.name) === normalizeName(item.theatreName),
-      );
-      if (!theatre) {
-        theatre = await prisma.theatre.create({
-          data: { name: item.theatreName, locationId: location.id },
-        });
-        existingTheatres.push(theatre);
-      }
+    const format = await getOrCreateFormat(item.format || "2D");
 
-      const format = await getOrCreateFormat(item.format || "2D");
+    const existing = await prisma.showtime.findUnique({
+      where: {
+        movieId_theatreId_formatId_date_time: {
+          movieId,
+          theatreId: theatre.id,
+          formatId: format.id,
+          date,
+          time: item.time,
+        },
+      },
+    });
 
-      const existing = await prisma.showtime.findUnique({
-        where: {
-          movieId_theatreId_formatId_date_time: {
-            movieId,
-            theatreId: theatre.id,
-            formatId: format.id,
-            date,
-            time: item.time,
-          },
+    if (!existing) {
+      const created = await prisma.showtime.create({
+        data: {
+          movieId,
+          theatreId: theatre.id,
+          formatId: format.id,
+          language: item.language || movieLanguage || null,
+          date,
+          time: item.time,
+          price: item.price ?? null,
+          seatsAvailable: item.seatsAvailable ?? null,
         },
       });
+      try {
+        await matchShowtimeAgainstRequests(created.id);
+      } catch (matchErr) {
+        console.warn("[showtime-sync] Match error:", matchErr);
+      }
+      totalAdded++;
+    } else {
+      // Update missing language, price or seats if newly discovered
+      const updates: any = {};
+      if (!existing.language && item.language) updates.language = item.language;
+      if (existing.price == null && item.price != null) updates.price = item.price;
+      if (existing.seatsAvailable == null && item.seatsAvailable != null) updates.seatsAvailable = item.seatsAvailable;
 
-      if (!existing) {
-        const created = await prisma.showtime.create({
-          data: {
-            movieId,
-            theatreId: theatre.id,
-            formatId: format.id,
-            language: item.language || movieLanguage || null,
-            date,
-            time: item.time,
-          },
-        });
-        try {
-          await matchShowtimeAgainstRequests(created.id);
-        } catch (matchErr) {
-          console.warn("[showtime-sync] Match error:", matchErr);
-        }
-        totalAdded++;
-      } else if (!existing.language && item.language) {
-        // Backfill language on existing showtime
-        await prisma.showtime.update({
-          where: { id: existing.id },
-          data: { language: item.language },
-        });
+      if (Object.keys(updates).length > 0) {
+        await prisma.showtime.update({ where: { id: existing.id }, data: updates });
       }
     }
   }
 
-  // Mark movie as RUNNING
   await prisma.movie.update({
     where: { id: movieId },
     data: { status: "RUNNING" },
   });
 
-  console.log(`[showtime-sync] ${movieTitle}: added ${totalAdded} new showtimes across ${toiUrls.length} pages`);
+  console.log(
+    `[showtime-sync] ${movieTitle}: added ${totalAdded} new showtimes (out of ${scrapedAll.length} scraped across BMS/District/TOI)`,
+  );
   return totalAdded;
 }

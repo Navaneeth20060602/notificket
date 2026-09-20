@@ -1,0 +1,6 @@
+{
+  "timestamp": "2026-09-20T13:06:31.006+00:00",
+  "status": 403,
+  "error": "Forbidden",
+  "path": "/api/v1/booking/content/cinemas"
+}
