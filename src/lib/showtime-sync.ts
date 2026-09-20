@@ -17,7 +17,7 @@ export type ScrapedShowtime = {
   language: string | null;
   price?: number | null;
   seatsAvailable?: number | null;
-  platform?: string; // "BMS" | "DISTRICT" | "TOI"
+  platform: "BMS" | "DISTRICT";
 };
 
 function parseTo24h(timeStr: string): string | null {
@@ -113,7 +113,7 @@ export async function scrapeBmsViaJina(
   }
 }
 
-// 2. Scrape District.in via server-rendered __NEXT_DATA__
+// 2. Scrape District.in (Multi-language & Multi-date support)
 export async function scrapeDistrictShowtimes(
   districtUrl: string,
   fallbackLang?: string | null,
@@ -133,58 +133,144 @@ export async function scrapeDistrictShowtimes(
 
     if (!res.ok) return [];
     const html = await res.text();
-    const match = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
-    if (!match) return [];
-    const data = JSON.parse(match[1]);
+    const idx = html.indexOf('id="__NEXT_DATA__"');
+    if (idx === -1) return [];
+    const start = html.indexOf(">", idx) + 1;
+    const end = html.indexOf("</script>", start);
+    const data = JSON.parse(html.slice(start, end));
 
-    const mdp = data.props?.pageProps?.initialState?.mdpV2;
-    const movieObj = (Object.values(mdp?.movieData || {})[0] as any)?.movie;
-    const movieLangs = movieObj?.languages || (movieObj?.primary_language ? [movieObj.primary_language] : []);
-    const defaultLang = fallbackLang || movieLangs[0] || null;
+    const serverState = data.props?.pageProps?.data?.serverState;
+    const movieContents = serverState?.movieContents || {};
 
-    const cinemas: any[] = [];
-    function findCinemas(obj: any) {
-      if (!obj || typeof obj !== "object") return;
-      if (obj.entityName && Array.isArray(obj.sessions) && obj.sessions.length > 0) {
-        cinemas.push(obj);
+    // 1. Discover all languages and format groups from movieContents
+    const langGroups: { language: string; fmtGrpId: string; number_of_sessions?: number }[] = [];
+    for (const contentId of Object.keys(movieContents)) {
+      const mc = movieContents[contentId];
+      if (Array.isArray(mc?.languageFormatGroups)) {
+        langGroups.push(...mc.languageFormatGroups);
       }
-      for (const k of Object.keys(obj)) findCinemas(obj[k]);
     }
-    findCinemas(data);
 
     const results: ScrapedShowtime[] = [];
     const seen = new Set<string>();
 
-    for (const c of cinemas) {
-      const theatreName = (c.entityName as string).replace(/\s+/g, " ").trim();
-      for (const s of c.sessions) {
-        if (!s.showTime || s.showTime.length < 16) continue;
-        const date = s.showTime.slice(0, 10);
-        const time = s.showTime.slice(11, 16);
-        let format = s.scrnFmt || "2D";
-        if (/\bIMAX\b/i.test(theatreName)) format = "IMAX";
-        else if (/\b4DX\b/i.test(theatreName)) format = "4DX";
-        else if (/\bDolby\b/i.test(theatreName)) format = "Dolby Atmos";
+    function extractFromMovieSessions(sessionsMap: any, groupLang: string) {
+      if (!sessionsMap || typeof sessionsMap !== "object") return;
+      for (const k of Object.keys(sessionsMap)) {
+        const item = sessionsMap[k];
+        const arranged = item?.arrangedSessions || (Array.isArray(item) ? item : []);
+        for (const c of arranged) {
+          const theatreName = (c.entityName || "").replace(/\s+/g, " ").trim();
+          if (!theatreName) continue;
+          for (const s of c.sessions || []) {
+            if (!s.showTime || s.showTime.length < 16) continue;
+            const date = s.showTime.slice(0, 10);
+            const time = s.showTime.slice(11, 16);
+            let format = s.scrnFmt || "2D";
+            if (/\bIMAX\b/i.test(theatreName)) format = "IMAX";
+            else if (/\b4DX\b/i.test(theatreName)) format = "4DX";
+            else if (/\bDolby\b/i.test(theatreName)) format = "Dolby Atmos";
 
-        const minPrice = s.areas?.length ? Math.min(...s.areas.map((a: any) => a.price).filter(Boolean)) : null;
-        const seatsAvailable = s.avail ?? null;
+            const minPrice = s.areas?.length
+              ? Math.min(...s.areas.map((a: any) => a.price).filter(Boolean))
+              : null;
+            const seatsAvailable = s.avail ?? null;
 
-        const key = `${theatreName}|${date}|${time}|${format}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          results.push({
-            theatreName,
-            date,
-            time,
-            format,
-            language: defaultLang,
-            price: minPrice,
-            seatsAvailable,
-            platform: "DISTRICT",
-          });
+            const key = `${theatreName}|${date}|${time}|${format}|${groupLang}`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              results.push({
+                theatreName,
+                date,
+                time,
+                format,
+                language: groupLang,
+                price: minPrice,
+                seatsAvailable,
+                platform: "DISTRICT",
+              });
+            }
+          }
         }
       }
     }
+
+    // Process initial movieSessions in page
+    const initialMovieSessions = serverState?.movieSessions || {};
+    const fmtToLang: Record<string, string> = {};
+    langGroups.forEach((g) => {
+      if (g.fmtGrpId) fmtToLang[g.fmtGrpId.toLowerCase()] = g.language;
+    });
+
+    for (const key of Object.keys(initialMovieSessions)) {
+      const assignedLang = fmtToLang[key.toLowerCase()] || fallbackLang || "Telugu";
+      extractFromMovieSessions({ [key]: initialMovieSessions[key] }, assignedLang);
+    }
+
+    // Fetch other language format groups
+    const baseUrl = districtUrl.split("?")[0];
+    const initialKeys = Object.keys(initialMovieSessions).map((k) => k.toLowerCase());
+
+    for (const g of langGroups) {
+      if (!g.fmtGrpId) continue;
+      if (!initialKeys.includes(g.fmtGrpId.toLowerCase())) {
+        try {
+          const subRes = await fetch(`${baseUrl}?frmtid=${g.fmtGrpId}`, {
+            headers: {
+              "User-Agent": USER_AGENT,
+              Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            },
+            cache: "no-store",
+          });
+          if (subRes.ok) {
+            const subHtml = await subRes.text();
+            const subIdx = subHtml.indexOf('id="__NEXT_DATA__"');
+            if (subIdx !== -1) {
+              const subStart = subHtml.indexOf(">", subIdx) + 1;
+              const subEnd = subHtml.indexOf("</script>", subStart);
+              const subData = JSON.parse(subHtml.slice(subStart, subEnd));
+              const subMovieSessions = subData.props?.pageProps?.data?.serverState?.movieSessions || {};
+              extractFromMovieSessions(subMovieSessions, g.language);
+            }
+          }
+        } catch {
+          // ignore sub-language fetch failure
+        }
+      }
+    }
+
+    // Also fetch tomorrow's date for District so upcoming showtimes are listed
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowStr = tomorrow.toISOString().slice(0, 10);
+    for (const g of langGroups.length ? langGroups : [{ language: fallbackLang || "Telugu", fmtGrpId: "" }]) {
+      try {
+        const dateUrl = g.fmtGrpId
+          ? `${baseUrl}?frmtid=${g.fmtGrpId}&fromdate=${tomorrowStr}`
+          : `${baseUrl}?fromdate=${tomorrowStr}`;
+        const dateRes = await fetch(dateUrl, {
+          headers: {
+            "User-Agent": USER_AGENT,
+            Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          },
+          cache: "no-store",
+        });
+        if (dateRes.ok) {
+          const dateHtml = await dateRes.text();
+          const dIdx = dateHtml.indexOf('id="__NEXT_DATA__"');
+          if (dIdx !== -1) {
+            const dStart = dateHtml.indexOf(">", dIdx) + 1;
+            const dEnd = dateHtml.indexOf("</script>", dStart);
+            const dData = JSON.parse(dateHtml.slice(dStart, dEnd));
+            const dateMovieSessions = dData.props?.pageProps?.data?.serverState?.movieSessions || {};
+            extractFromMovieSessions(dateMovieSessions, g.language);
+          }
+        }
+      } catch {
+        // ignore tomorrow fetch failure
+      }
+    }
+
     return results;
   } catch (err) {
     console.warn("[showtime-sync] District scrape failed:", err);
@@ -192,7 +278,7 @@ export async function scrapeDistrictShowtimes(
   }
 }
 
-// 3. Scrape Times of India HTML body + JSON-LD
+// 3. Scrape Times of India HTML body + JSON-LD (tagged as BMS so it augments BookMyShow)
 export async function scrapeToiShowtimes(
   toiUrl: string,
   fallbackLang?: string | null,
@@ -253,7 +339,7 @@ export async function scrapeToiShowtimes(
           const key = `${theatreName}|${pageDate}|${time24}|${format}|${language}`;
           if (!seen.has(key)) {
             seen.add(key);
-            results.push({ theatreName, date: pageDate, time: time24, format, language, platform: "TOI" });
+            results.push({ theatreName, date: pageDate, time: time24, format, language, platform: "BMS" });
           }
         }
       }
@@ -279,8 +365,9 @@ export async function syncMovieShowtimes(
   const key = process.env.SERP_SEARCH_API_KEY || DEFAULT_SERP_KEY;
   const queries = [
     `${movieTitle} movie show time in ${CITY}`,
+    `${movieTitle} Telugu movie BookMyShow ${CITY}`,
+    `${movieTitle} movie District ${CITY}`,
     ...(movieLanguage ? [`${movieTitle} ${movieLanguage} movie showtimes ${CITY}`] : []),
-    ...(movieLanguage !== "Telugu" ? [`${movieTitle} Telugu movie showtimes ${CITY}`] : []),
   ];
 
   const bmsUrls: { url: string; language: string | null }[] = [];
@@ -319,7 +406,7 @@ export async function syncMovieShowtimes(
             const slug = etMatch[1];
             const etCode = etMatch[2];
             const buyticketsUrl = `https://in.bookmyshow.com/movies/hyderabad/${slug}/buytickets/${etCode}/${dateCompact}`;
-            const combinedText = `${r.title || ""} ${r.snippet || ""} ${r.description || ""}`;
+            const combinedText = `${query} ${r.title || ""} ${r.snippet || ""} ${r.description || ""}`;
             const lang = extractLanguageFromUrlOrText(combinedText) || movieLanguage || null;
             if (!bmsUrls.some((b) => b.url === buyticketsUrl)) {
               bmsUrls.push({ url: buyticketsUrl, language: lang });
@@ -366,7 +453,7 @@ export async function syncMovieShowtimes(
   }
 
   if (scrapedAll.length === 0) {
-    console.log(`[showtime-sync] ${movieTitle}: no showtimes found across BMS, District, or TOI`);
+    console.log(`[showtime-sync] ${movieTitle}: no showtimes found across BMS or District`);
     return 0;
   }
 
@@ -397,15 +484,17 @@ export async function syncMovieShowtimes(
     }
 
     const format = await getOrCreateFormat(item.format || "2D");
+    const platform = item.platform || "BMS";
 
     const existing = await prisma.showtime.findUnique({
       where: {
-        movieId_theatreId_formatId_date_time: {
+        movieId_theatreId_formatId_date_time_platform: {
           movieId,
           theatreId: theatre.id,
           formatId: format.id,
           date,
           time: item.time,
+          platform,
         },
       },
     });
@@ -421,7 +510,7 @@ export async function syncMovieShowtimes(
           time: item.time,
           price: item.price ?? null,
           seatsAvailable: item.seatsAvailable ?? null,
-          platform: item.platform ?? null,
+          platform,
         },
       });
       try {
@@ -431,17 +520,11 @@ export async function syncMovieShowtimes(
       }
       totalAdded++;
     } else {
-      // Update missing language, price, seats, or platform if newly discovered
+      // Update missing language, price or seats if newly discovered
       const updates: any = {};
-      if (!existing.language && item.language) updates.language = item.language;
+      if (item.language && existing.language !== item.language) updates.language = item.language;
       if (existing.price == null && item.price != null) updates.price = item.price;
       if (existing.seatsAvailable == null && item.seatsAvailable != null) updates.seatsAvailable = item.seatsAvailable;
-      // Merge platform tags: e.g. existing="BMS" + new="DISTRICT" => "BMS,DISTRICT"
-      if (item.platform && (!existing.platform || !existing.platform.split(",").includes(item.platform))) {
-        const parts = existing.platform ? existing.platform.split(",") : [];
-        parts.push(item.platform);
-        updates.platform = parts.join(",");
-      }
 
       if (Object.keys(updates).length > 0) {
         await prisma.showtime.update({ where: { id: existing.id }, data: updates });
@@ -455,7 +538,7 @@ export async function syncMovieShowtimes(
   });
 
   console.log(
-    `[showtime-sync] ${movieTitle}: added ${totalAdded} new showtimes (out of ${scrapedAll.length} scraped across BMS/District/TOI)`,
+    `[showtime-sync] ${movieTitle}: added ${totalAdded} new showtimes (out of ${scrapedAll.length} scraped across BMS/District)`,
   );
   return totalAdded;
 }

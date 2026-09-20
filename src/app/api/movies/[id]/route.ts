@@ -1,4 +1,4 @@
-﻿import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/api-helpers";
 import { syncMovieShowtimes } from "@/lib/showtime-sync";
@@ -18,7 +18,13 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   if (!movie) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const movieTitle = movie.title;
-  const shouldSync = movie.showtimes.length === 0 || req.nextUrl.searchParams.get("sync") === "true";
+  const hasDistrict = movie.showtimes.some((s) => s.platform === "DISTRICT");
+  const hasBms = movie.showtimes.some((s) => s.platform === "BMS");
+  const shouldSync =
+    movie.showtimes.length === 0 ||
+    !hasDistrict ||
+    !hasBms ||
+    req.nextUrl.searchParams.get("sync") === "true";
   if (shouldSync) {
     try {
       const added = await syncMovieShowtimes(movie.id, movieTitle, movie.language);

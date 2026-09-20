@@ -26,7 +26,7 @@ export default function MovieDetailPage() {
   const [formats, setFormats] = useState<any[]>([]);
   const [showtimeDate, setShowtimeDate] = useState("");
   const [selectedLanguage, setSelectedLanguage] = useState("");
-  const [selectedPlatform, setSelectedPlatform] = useState(""); // "" = All, "BMS", "DISTRICT"
+  const [selectedPlatform, setSelectedPlatform] = useState<"BMS" | "DISTRICT">("BMS");
   const [hideCompleted, setHideCompleted] = useState(false);
   const [showtimeTheatreSearch, setShowtimeTheatreSearch] = useState("");
 
@@ -81,19 +81,6 @@ export default function MovieDetailPage() {
     fetch(`/api/theatres?locationId=${locationId}`).then((r) => r.json()).then((d) => setTheatres(d.theatres || []));
   }, [locationId]);
 
-  useEffect(() => {
-    if (!movie) return;
-    const nowDate = todayInputDate();
-    const validDates = (movie.showtimes || [])
-      .filter((s: any) => toInputDate(s.date) >= nowDate)
-      .map((s: any) => toInputDate(s.date))
-      .sort();
-    const firstDate = validDates[0];
-    if (firstDate && !validDates.includes(showtimeDate)) {
-      setShowtimeDate(firstDate);
-    }
-  }, [movie, showtimeDate]);
-
   function toggle(values: string[], value: string, setValues: (values: string[]) => void) {
     setValues(values.includes(value) ? values.filter((item) => item !== value) : [...values, value]);
   }
@@ -131,47 +118,43 @@ export default function MovieDetailPage() {
   const nowDate = todayInputDate();
   const nowTime = new Date().toTimeString().slice(0, 5);
 
-  // Only keep today and future dates
-  const nonPastDayShowtimes = (movie.showtimes || []).filter((s: any) => {
+  // All valid current and future shows across all platforms
+  const allCurrentShowtimes = (movie.showtimes || []).filter((s: any) => {
     return toInputDate(s.date) >= nowDate;
   });
 
-  // Distinct languages
-  const availableLanguages: string[] = Array.from(
-    new Set<string>(
-      nonPastDayShowtimes.map((s: any) => s.language).filter(Boolean)
-    )
-  );
+  // Calculate distinct theatres available on each platform
+  const bmsShowsAll = allCurrentShowtimes.filter((s: any) => !s.platform || s.platform.includes("BMS"));
+  const distShowsAll = allCurrentShowtimes.filter((s: any) => s.platform?.includes("DISTRICT"));
 
-  // Distinct dates
+  const bmsTheatresCount = new Set(bmsShowsAll.map((s: any) => s.theatreId)).size;
+  const distTheatresCount = new Set(distShowsAll.map((s: any) => s.theatreId)).size;
+
+  // Active platform showtimes
+  const platformShows = selectedPlatform === "DISTRICT" ? distShowsAll : bmsShowsAll;
+
+  // Available dates specifically for the selected platform
   const showtimeDates: string[] = Array.from(
-    new Set<string>(nonPastDayShowtimes.map((s: any) => toInputDate(s.date)))
+    new Set<string>(platformShows.map((s: any) => toInputDate(s.date)))
   ).sort();
 
-  // Which platforms have shows
-  const platformSet = new Set<string>();
-  nonPastDayShowtimes.forEach((s: any) => {
-    if (s.platform) s.platform.split(",").forEach((p: string) => platformSet.add(p.trim()));
-  });
-  const hasBms = platformSet.has("BMS");
-  const hasDistrict = platformSet.has("DISTRICT");
+  // Active date (if current showtimeDate not in this platform's dates, pick the first one)
+  const activeDate = showtimeDates.includes(showtimeDate) ? showtimeDate : (showtimeDates[0] || "");
 
-  // Filter by date, language, completed, theatre search
-  const baseFiltered = nonPastDayShowtimes
-    .filter((s: any) => toInputDate(s.date) === showtimeDate)
+  // Available languages specifically for the selected platform on this date or overall
+  const availableLanguages: string[] = Array.from(
+    new Set<string>(platformShows.map((s: any) => s.language).filter(Boolean))
+  );
+
+  // Filter shows by date, language, completion, and search
+  const visibleShowtimes = platformShows
+    .filter((s: any) => toInputDate(s.date) === activeDate)
     .filter((s: any) => !selectedLanguage || s.language === selectedLanguage)
     .filter((s: any) => !hideCompleted || (toInputDate(s.date) === nowDate ? s.time > nowTime : true))
     .filter((s: any) => s.theatre.name.toLowerCase().includes(showtimeTheatreSearch.trim().toLowerCase()))
     .sort((a: any, b: any) => a.time.localeCompare(b.time) || a.theatre.name.localeCompare(b.theatre.name));
 
-  // Further filter by platform tab
-  const visibleShowtimes = baseFiltered.filter((s: any) => {
-    if (!selectedPlatform) return true;
-    if (!s.platform) return false;
-    return s.platform.split(",").map((p: string) => p.trim()).includes(selectedPlatform);
-  });
-
-  // Group by theatre
+  // Group visible showtimes by theatre
   const grouped = new Map<string, { theatre: any; showtimes: any[] }>();
   for (const s of visibleShowtimes) {
     if (!grouped.has(s.theatre.id)) grouped.set(s.theatre.id, { theatre: s.theatre, showtimes: [] });
@@ -199,33 +182,73 @@ export default function MovieDetailPage() {
         </p>
 
         {movie.status === "RUNNING" ? (
-          <div className="mt-8 space-y-3">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <h2 className="text-lg font-medium">Showtimes</h2>
-                <span className="text-xs text-muted">
-                  ({groupedTheatres.length} {groupedTheatres.length === 1 ? "theatre" : "theatres"} showing)
-                </span>
-              </div>
+          <div className="mt-8 space-y-4">
+            {/* Header + Refresh */}
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-medium">Showtimes</h2>
               <button
                 type="button"
                 onClick={() => loadMovie(true)}
                 disabled={syncing}
-                className="text-xs text-brand-400 hover:text-brand-300 disabled:text-muted transition-colors flex items-center gap-1"
+                className="text-xs text-brand-400 hover:text-brand-300 disabled:text-muted transition-colors flex items-center gap-1 font-medium"
               >
                 {syncing ? "Refreshing showtimes..." : "🔄 Refresh showtimes"}
               </button>
             </div>
 
-            {nonPastDayShowtimes.length === 0 && (
-              <p className="text-muted text-sm">
-                {syncing ? "Fetching showtimes across all theatres..." : "No showtimes listed yet."}
-              </p>
+            {/* Independent Platform Switcher: BookMyShow vs District */}
+            <div className="flex items-center gap-2 p-1.5 bg-surface rounded-xl border border-subtle w-fit">
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedPlatform("BMS");
+                  setSelectedLanguage("");
+                }}
+                className={`px-5 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-all ${
+                  selectedPlatform === "BMS"
+                    ? "bg-red-600 text-white shadow-md font-semibold"
+                    : "text-muted hover:text-white"
+                }`}
+              >
+                <span>🎟 BookMyShow</span>
+                <span className="text-xs px-2 py-0.5 rounded-full bg-black/30 border border-white/20 text-white/90">
+                  {bmsTheatresCount} {bmsTheatresCount === 1 ? "theatre" : "theatres"}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedPlatform("DISTRICT");
+                  setSelectedLanguage("");
+                }}
+                className={`px-5 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-all ${
+                  selectedPlatform === "DISTRICT"
+                    ? "bg-purple-600 text-white shadow-md font-semibold"
+                    : "text-muted hover:text-white"
+                }`}
+              >
+                <span>🎬 District</span>
+                <span className="text-xs px-2 py-0.5 rounded-full bg-black/30 border border-white/20 text-white/90">
+                  {distTheatresCount} {distTheatresCount === 1 ? "theatre" : "theatres"}
+                </span>
+              </button>
+            </div>
+
+            {/* If no shows on this platform */}
+            {platformShows.length === 0 && (
+              <div className="card p-6 text-center">
+                <p className="text-muted text-sm">
+                  {syncing
+                    ? `Searching ${selectedPlatform === "BMS" ? "BookMyShow" : "District"} for tickets...`
+                    : `No showtimes found on ${selectedPlatform === "BMS" ? "BookMyShow" : "District"} for this movie.`}
+                </p>
+              </div>
             )}
 
-            {nonPastDayShowtimes.length > 0 && (
+            {platformShows.length > 0 && (
               <>
-                {/* Date selection tabs */}
+                {/* Dates for this platform */}
                 <div className="flex gap-2 overflow-x-auto pb-1" aria-label="Choose showtime date">
                   {showtimeDates.map((availableDate) => (
                     <button
@@ -233,7 +256,7 @@ export default function MovieDetailPage() {
                       type="button"
                       onClick={() => setShowtimeDate(availableDate)}
                       className={
-                        showtimeDate === availableDate
+                        activeDate === availableDate
                           ? "btn-primary whitespace-nowrap px-4 py-2 text-sm"
                           : "card whitespace-nowrap px-4 py-2 text-sm hover:border-brand-400"
                       }
@@ -243,54 +266,10 @@ export default function MovieDetailPage() {
                   ))}
                 </div>
 
-                {/* Platform tabs — BookMyShow / District / All */}
-                {(hasBms || hasDistrict) && (
-                  <div className="flex items-center gap-2 overflow-x-auto py-1" aria-label="Filter by platform">
-                    <span className="text-xs text-muted font-medium shrink-0">Platform:</span>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedPlatform("")}
-                      className={
-                        selectedPlatform === ""
-                          ? "btn-primary !py-1 px-3 text-xs whitespace-nowrap"
-                          : "card !py-1 px-3 text-xs hover:border-brand-400 whitespace-nowrap"
-                      }
-                    >
-                      All
-                    </button>
-                    {hasBms && (
-                      <button
-                        type="button"
-                        onClick={() => setSelectedPlatform("BMS")}
-                        className={
-                          selectedPlatform === "BMS"
-                            ? "btn-primary !py-1 px-3 text-xs whitespace-nowrap"
-                            : "card !py-1 px-3 text-xs hover:border-red-500/60 whitespace-nowrap"
-                        }
-                      >
-                        🎟 BookMyShow
-                      </button>
-                    )}
-                    {hasDistrict && (
-                      <button
-                        type="button"
-                        onClick={() => setSelectedPlatform("DISTRICT")}
-                        className={
-                          selectedPlatform === "DISTRICT"
-                            ? "btn-primary !py-1 px-3 text-xs whitespace-nowrap"
-                            : "card !py-1 px-3 text-xs hover:border-purple-500/60 whitespace-nowrap"
-                        }
-                      >
-                        🎬 District
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                {/* Multilingual filter tabs if multiple languages */}
+                {/* Multilingual filter tabs if multiple languages exist on this platform */}
                 {availableLanguages.length > 1 && (
                   <div className="flex items-center gap-2 overflow-x-auto py-1" aria-label="Filter by language">
-                    <span className="text-xs text-muted font-medium">Language:</span>
+                    <span className="text-xs text-muted font-medium shrink-0">Language:</span>
                     <button
                       type="button"
                       onClick={() => setSelectedLanguage("")}
@@ -326,10 +305,10 @@ export default function MovieDetailPage() {
                     className="input flex-1"
                     value={showtimeTheatreSearch}
                     onChange={(e) => setShowtimeTheatreSearch(e.target.value)}
-                    placeholder="Search theatres for the selected date..."
+                    placeholder={`Search ${selectedPlatform === "BMS" ? "BookMyShow" : "District"} theatres...`}
                     aria-label="Search theatres for selected date"
                   />
-                  {showtimeDate === nowDate && (
+                  {activeDate === nowDate && (
                     <label className="flex items-center gap-2 text-xs text-muted cursor-pointer select-none shrink-0 px-1">
                       <input
                         type="checkbox"
@@ -341,82 +320,91 @@ export default function MovieDetailPage() {
                     </label>
                   )}
                 </div>
+
+                {/* Empty results with active filter */}
+                {visibleShowtimes.length === 0 && (
+                  <p className="text-muted text-sm py-4">
+                    No theatres match that filter on {formatDate(activeDate)}
+                    {selectedLanguage ? ` for ${selectedLanguage}` : ""} on{" "}
+                    {selectedPlatform === "BMS" ? "BookMyShow" : "District"}.
+                  </p>
+                )}
+
+                {/* Theatres and Showtimes for this platform */}
+                <div className="space-y-3">
+                  {groupedTheatres.map(({ theatre, showtimes: times }) => (
+                    <div key={theatre.id} className="card p-4">
+                      <div className="mb-3 flex items-start justify-between">
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="font-semibold text-base">{theatre.name}</p>
+                            <span
+                              className={`text-[10px] font-medium px-2 py-0.5 rounded-full border ${
+                                selectedPlatform === "DISTRICT"
+                                  ? "bg-purple-900/50 text-purple-300 border-purple-700/50"
+                                  : "bg-red-900/50 text-red-300 border-red-700/50"
+                              }`}
+                            >
+                              {selectedPlatform === "DISTRICT" ? "District" : "BookMyShow"}
+                            </span>
+                          </div>
+                          <p className="text-xs text-muted mt-0.5">
+                            {theatre.location?.name || "Hyderabad"}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        {times.map((s: any) => {
+                          const isEnded = toInputDate(s.date) === nowDate && s.time <= nowTime;
+                          return (
+                            <div
+                              key={s.id}
+                              className={`inline-flex flex-col items-center border rounded-lg px-3.5 py-2 text-xs transition-all ${
+                                isEnded
+                                  ? "bg-surface/40 border-subtle/50 opacity-40"
+                                  : "bg-surface border-subtle hover:border-brand-400"
+                              }`}
+                              title={isEnded ? "This show has already started or ended" : "Available show"}
+                            >
+                              <span
+                                className={`font-semibold text-sm ${
+                                  isEnded ? "line-through text-muted" : "text-white"
+                                }`}
+                              >
+                                {s.time}
+                              </span>
+                              <span className="text-muted text-[11px] mt-0.5">
+                                {s.language ? (
+                                  <span className="text-brand-300 font-medium">{s.language} · </span>
+                                ) : null}
+                                {s.format.name}
+                                {s.price != null ? ` · ₹${s.price}` : ""}
+                              </span>
+                              {isEnded ? (
+                                <span className="text-[10px] text-muted mt-0.5">Ended</span>
+                              ) : s.seatsAvailable != null ? (
+                                <span className="text-[10px] text-emerald-400 font-medium mt-0.5">
+                                  {s.seatsAvailable} seats available
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-muted mt-0.5">Available</span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </>
             )}
-
-            {nonPastDayShowtimes.length > 0 && visibleShowtimes.length === 0 && (
-              <p className="text-muted text-sm">
-                No theatres match that filter on {formatDate(showtimeDate)}
-                {selectedLanguage ? ` for ${selectedLanguage}` : ""}
-                {selectedPlatform === "BMS" ? " on BookMyShow" : selectedPlatform === "DISTRICT" ? " on District" : ""}.
-              </p>
-            )}
-
-            {groupedTheatres.map(({ theatre, showtimes: times }) => (
-              <div key={theatre.id} className="card p-4">
-                <div className="mb-3 flex items-start justify-between">
-                  <div>
-                    <p className="font-medium">{theatre.name}</p>
-                    <p className="text-xs text-muted">{theatre.location?.name}</p>
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {times.map((s: any) => {
-                    const isEnded = toInputDate(s.date) === nowDate && s.time <= nowTime;
-                    // Determine platform badge for this show
-                    const platforms = s.platform ? s.platform.split(",").map((p: string) => p.trim()) : [];
-                    const showBmsBadge = platforms.includes("BMS");
-                    const showDistrictBadge = platforms.includes("DISTRICT");
-                    return (
-                      <span
-                        key={s.id}
-                        className={`inline-flex flex-col items-center border rounded-lg px-3 py-2 text-xs transition-opacity ${
-                          isEnded
-                            ? "bg-surface/40 border-subtle/50 opacity-40"
-                            : "bg-surface border-subtle hover:border-brand-400"
-                        }`}
-                        title={isEnded ? "This show has already started or ended" : "Upcoming show"}
-                      >
-                        <span className={`font-semibold text-sm ${isEnded ? "line-through text-muted" : ""}`}>
-                          {s.time}
-                        </span>
-                        <span className="text-muted text-[11px] mt-0.5">
-                          {s.language ? (
-                            <span className="text-brand-300 font-medium">{s.language} · </span>
-                          ) : null}
-                          {s.format.name}
-                          {s.price != null ? ` · ₹${s.price}` : ""}
-                        </span>
-                        {isEnded ? (
-                          <span className="text-[10px] text-muted">Ended</span>
-                        ) : s.seatsAvailable != null ? (
-                          <span className="text-[10px] text-amber-400 font-medium">
-                            {s.seatsAvailable} seats
-                          </span>
-                        ) : null}
-                        {/* Platform badges on each show pill */}
-                        {(showBmsBadge || showDistrictBadge) && !selectedPlatform && (
-                          <span className="flex gap-1 mt-1">
-                            {showBmsBadge && (
-                              <span className="text-[9px] bg-red-900/50 text-red-300 rounded px-1">BMS</span>
-                            )}
-                            {showDistrictBadge && (
-                              <span className="text-[9px] bg-purple-900/50 text-purple-300 rounded px-1">District</span>
-                            )}
-                          </span>
-                        )}
-                      </span>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
           </div>
         ) : submitted ? (
           <div className="card p-6 mt-8">
             <p className="font-medium">You&apos;re all set.</p>
             <p className="text-muted text-sm mt-1">
-              We&apos;ll alert you the moment matching tickets go live. Manage this anytime from{" "}
+              We&apos;ll alert you the moment matching tickets go live on BookMyShow or District. Manage this anytime from{" "}
               <a href="/dashboard/requests" className="text-brand-400">
                 My requests
               </a>
@@ -427,7 +415,7 @@ export default function MovieDetailPage() {
           <form onSubmit={submitRequest} className="card p-6 mt-8 space-y-4">
             <h2 className="text-lg font-medium">Tell us what you want</h2>
             <p className="text-sm text-muted -mt-2">
-              Select the theatres, formats and languages you want us to watch.
+              Select the theatres, formats and languages you want us to watch across BookMyShow and District.
             </p>
 
             <div>

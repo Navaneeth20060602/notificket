@@ -40,7 +40,8 @@ export async function matchShowtimeAgainstRequests(showtimeId: string) {
   const results = [];
   for (const req of matched) {
     const langStr = showtime.language ? `${showtime.language} ` : "";
-    const message = `${showtime.movie.title} (${langStr}${showtime.format.name}) tickets are live at ${showtime.theatre.name} (${showtime.theatre.location.name}) on ${formatDate(showtime.date)} at ${showtime.time}.`;
+    const platStr = showtime.platform === "DISTRICT" ? "District" : "BookMyShow";
+    const message = `${showtime.movie.title} (${langStr}${showtime.format.name}) tickets are live on ${platStr} at ${showtime.theatre.name} (${showtime.theatre.location.name}) on ${formatDate(showtime.date)} at ${showtime.time}.`;
 
     const notification = await prisma.notification.create({
       data: {

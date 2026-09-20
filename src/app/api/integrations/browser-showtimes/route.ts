@@ -6,7 +6,7 @@ import { matchShowtimeAgainstRequests } from "@/lib/matching";
 
 export const dynamic = "force-dynamic";
 
-type IncomingShowtime = { theatreName: string; date: string; time: string; format?: string; price?: number | null };
+type IncomingShowtime = { theatreName: string; date: string; time: string; format?: string; price?: number | null; platform?: string };
 
 function validKey(received: string | null, expected: string) {
   if (!received || received.length !== expected.length) return false;
@@ -39,9 +39,10 @@ export async function POST(req: NextRequest) {
     const formatName = incoming.format?.trim() || "2D";
     let format = await prisma.format.findFirst({ where: { name: { equals: formatName } } });
     if (!format) format = await prisma.format.create({ data: { name: formatName } });
-    const exists = await prisma.showtime.findUnique({ where: { movieId_theatreId_formatId_date_time: { movieId: movie.id, theatreId: theatre.id, formatId: format.id, date, time: incoming.time } } });
+    const platform = incoming.platform || "BMS";
+    const exists = await prisma.showtime.findUnique({ where: { movieId_theatreId_formatId_date_time_platform: { movieId: movie.id, theatreId: theatre.id, formatId: format.id, date, time: incoming.time, platform } } });
     if (exists) continue;
-    const showtime = await prisma.showtime.create({ data: { movieId: movie.id, theatreId: theatre.id, formatId: format.id, date, time: incoming.time, price: typeof incoming.price === "number" ? incoming.price : null } });
+    const showtime = await prisma.showtime.create({ data: { movieId: movie.id, theatreId: theatre.id, formatId: format.id, date, time: incoming.time, price: typeof incoming.price === "number" ? incoming.price : null, platform } });
     await prisma.movie.update({ where: { id: movie.id }, data: { status: "RUNNING" } });
     notified += (await matchShowtimeAgainstRequests(showtime.id)).length;
     added++;

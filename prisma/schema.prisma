@@ -107,12 +107,12 @@ model Showtime {
   time           String // stored as "HH:MM", 24h
   price          Float?
   seatsAvailable Int?
-  platform       String?  // "BMS" | "DISTRICT" | "TOI" | comma-separated combinations
+  platform       String   @default("BMS") // "BMS" | "DISTRICT"
   createdAt      DateTime @default(now())
 
   notifications Notification[]
 
-  @@unique([movieId, theatreId, formatId, date, time])
+  @@unique([movieId, theatreId, formatId, date, time, platform])
 }
 
 // A user's saved alert preference for an upcoming movie (or a saved filter

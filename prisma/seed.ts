@@ -47,12 +47,13 @@ async function main() {
   });
   await prisma.showtime.upsert({
     where: {
-      movieId_theatreId_formatId_date_time: {
+      movieId_theatreId_formatId_date_time_platform: {
         movieId: runningMovie.id,
         theatreId: theatres["PVR Banjara Hills"],
         formatId: formats["2D"],
         date: new Date(new Date().toDateString()),
         time: "19:30",
+        platform: "BMS",
       },
     },
     update: {},
