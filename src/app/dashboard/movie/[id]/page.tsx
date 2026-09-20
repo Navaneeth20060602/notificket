@@ -107,13 +107,26 @@ export default function MovieDetailPage() {
     setSubmitting(false);
     if (!res.ok) {
       const d = await res.json();
-      setError(d.error || "Something went wrong");
+      if (d.alreadyShowingTheatreIds?.length > 0) {
+        // Auto-deselect theatres where movie is already showing
+        setTheatreIds((prev) => prev.filter((id) => !d.alreadyShowingTheatreIds.includes(id)));
+        setError(`Already showing at: ${d.error}. Request only for theatres where it's not released yet.`);
+      } else {
+        setError(d.error || "Something went wrong");
+      }
       return;
     }
     setSubmitted(true);
   }
 
   if (!user || !movie) return null;
+
+  // Check if movie has showtimes on any platform (for pre-release option visibility)
+  const hasAnyShowtimes = (movie.showtimes || []).length > 0;
+  // Check if movie is currently showing on District
+  const hasDistrictShowtimes = (movie.showtimes || []).some((s: any) => s.platform === "DISTRICT");
+  // Check if movie is currently showing on BookMyShow
+  const hasBmsShowtimes = (movie.showtimes || []).some((s: any) => !s.platform || s.platform === "BMS");
 
   const nowDate = todayInputDate();
   const nowTime = new Date().toTimeString().slice(0, 5);
@@ -538,22 +551,24 @@ export default function MovieDetailPage() {
               </div>
             </div>
 
-            <div className="card p-4 bg-surface border-subtle">
-              <label className="flex items-start gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={preRelease}
-                  onChange={(e) => setPreRelease(e.target.checked)}
-                  className="mt-1 rounded"
-                />
-                <div>
-                  <p className="font-medium text-sm">Notify on release</p>
-                  <p className="text-xs text-muted mt-0.5">
-                    Get notified when this movie is released at the selected theatres (before ticket sales start)
-                  </p>
-                </div>
-              </label>
-            </div>
+            {hasAnyShowtimes && (
+              <div className="card p-4 bg-surface border-subtle">
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={preRelease}
+                    onChange={(e) => setPreRelease(e.target.checked)}
+                    className="mt-1 rounded"
+                  />
+                  <div>
+                    <p className="font-medium text-sm">Notify on release</p>
+                    <p className="text-xs text-muted mt-0.5">
+                      Get notified when this movie is released at the selected theatres (not yet showing there)
+                    </p>
+                  </div>
+                </label>
+              </div>
+            )}
 
             {!preRelease && (
               <div>

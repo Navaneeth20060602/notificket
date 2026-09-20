@@ -77,6 +77,31 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Validate pre-release: movie must already exist on at least one platform
+  if (data.preRelease) {
+    const movie = await prisma.movie.findUnique({
+      where: { id: data.movieId },
+      include: { showtimes: { select: { theatreId: true, platform: true } } },
+    });
+    if (!movie || movie.showtimes.length === 0) {
+      return NextResponse.json({ error: "This movie has no showtimes yet. Check back when it's available on at least one platform." }, { status: 400 });
+    }
+    // Get all theatres where movie is already showing (any platform)
+    const existingTheatres = new Set(movie.showtimes.map((s) => s.theatreId));
+    // Find theatres in request where movie is already showing
+    const alreadyShowing = data.theatreIds.filter((id) => existingTheatres.has(id));
+    if (alreadyShowing.length > 0) {
+      const names = await prisma.theatre.findMany({
+        where: { id: { in: alreadyShowing } },
+        select: { name: true },
+      });
+      return NextResponse.json({ 
+        error: `Already showing at: ${names.map((t) => t.name).join(", ")}. Request only for theatres where it's not released yet.`,
+        alreadyShowingTheatreIds: alreadyShowing,
+      }, { status: 400 });
+    }
+  }
+
   const theatreCount = await prisma.theatre.count({ where: { id: { in: data.theatreIds }, locationId: data.locationId } });
   if (theatreCount !== data.theatreIds.length) {
     return NextResponse.json({ error: "Choose theatres from the selected location" }, { status: 400 });
