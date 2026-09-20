@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -25,6 +25,7 @@ export default function MovieDetailPage() {
   const [theatres, setTheatres] = useState<any[]>([]);
   const [formats, setFormats] = useState<any[]>([]);
   const [showtimeDate, setShowtimeDate] = useState("");
+  const [selectedLanguage, setSelectedLanguage] = useState("");
   const [showtimeTheatreSearch, setShowtimeTheatreSearch] = useState("");
 
   // request form state
@@ -139,9 +140,20 @@ export default function MovieDetailPage() {
     if (sd === nowDate && s.time <= nowTime) return false;
     return true;
   });
+
+  // Extract distinct available languages across all active showtimes
+  const availableLanguages: string[] = Array.from(
+    new Set<string>(
+      futureShowtimes
+        .map((s: any) => s.language)
+        .filter(Boolean)
+    )
+  );
+
   const showtimeDates: string[] = Array.from(new Set<string>(futureShowtimes.map((s: any) => toInputDate(s.date)))).sort();
   const visibleShowtimes = futureShowtimes
     .filter((s: any) => toInputDate(s.date) === showtimeDate)
+    .filter((s: any) => !selectedLanguage || s.language === selectedLanguage)
     .filter((s: any) => s.theatre.name.toLowerCase().includes(showtimeTheatreSearch.trim().toLowerCase()))
     .sort((a: any, b: any) => a.time.localeCompare(b.time) || a.theatre.name.localeCompare(b.theatre.name));
 
@@ -161,7 +173,13 @@ export default function MovieDetailPage() {
       <Navbar userName={user.name} role={user.role} />
       <div className="max-w-3xl mx-auto px-6 py-8">
         <h1 className="text-2xl font-semibold">{movie.title}</h1>
-        <p className="text-muted text-sm mt-1">{movie.language} &middot; {movie.status === "RUNNING" ? "Now showing" : "Upcoming"}</p>
+        <p className="text-muted text-sm mt-1">
+          {movie.language}
+          {availableLanguages.length > 0 && availableLanguages.some((l) => l !== movie.language)
+            ? ` · Available in: ${availableLanguages.join(", ")}`
+            : ""}
+          &middot; {movie.status === "RUNNING" ? "Now showing" : "Upcoming"}
+        </p>
 
         {movie.status === "RUNNING" ? (
           <div className="mt-8 space-y-3">
@@ -180,6 +198,7 @@ export default function MovieDetailPage() {
               <p className="text-muted text-sm">{syncing ? "Fetching showtimes..." : "No upcoming showtimes available."}</p>
             )}
             {futureShowtimes.length > 0 && <>
+              {/* Date tabs */}
               <div className="flex gap-2 overflow-x-auto pb-1" aria-label="Choose showtime date">
                 {showtimeDates.map((availableDate) => (
                   <button
@@ -192,6 +211,30 @@ export default function MovieDetailPage() {
                   </button>
                 ))}
               </div>
+
+              {/* Language filter pills if multi-language */}
+              {availableLanguages.length > 1 && (
+                <div className="flex gap-2 overflow-x-auto py-1" aria-label="Filter by language">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedLanguage("")}
+                    className={selectedLanguage === "" ? "btn-primary !py-1 px-3 text-xs" : "card !py-1 px-3 text-xs hover:border-brand-400"}
+                  >
+                    All Languages
+                  </button>
+                  {availableLanguages.map((lang) => (
+                    <button
+                      key={lang}
+                      type="button"
+                      onClick={() => setSelectedLanguage(lang)}
+                      className={selectedLanguage === lang ? "btn-primary !py-1 px-3 text-xs" : "card !py-1 px-3 text-xs hover:border-brand-400"}
+                    >
+                      {lang}
+                    </button>
+                  ))}
+                </div>
+              )}
+
               <input
                 type="search"
                 className="input"
@@ -202,7 +245,10 @@ export default function MovieDetailPage() {
               />
             </>}
             {futureShowtimes.length > 0 && visibleShowtimes.length === 0 && (
-              <p className="text-muted text-sm">No theatres match that search on {formatDate(showtimeDate)}.</p>
+              <p className="text-muted text-sm">
+                No theatres match that search on {formatDate(showtimeDate)}
+                {selectedLanguage ? ` for ${selectedLanguage}` : ""}.
+              </p>
             )}
             {groupedTheatres.map(({ theatre, showtimes: times }) => (
               <div key={theatre.id} className="card p-4">
@@ -214,7 +260,13 @@ export default function MovieDetailPage() {
                   {times.map((s: any) => (
                     <span key={s.id} className="inline-flex flex-col items-center bg-surface border border-subtle rounded-lg px-3 py-2 text-xs">
                       <span className="font-semibold text-sm">{s.time}</span>
-                      <span className="text-muted">{s.format.name}{s.price != null ? ` · \u20b9${s.price}` : ""}</span>
+                      <span className="text-muted">
+                        {s.language ? (
+                          <span className="text-brand-300 font-medium">{s.language} · </span>
+                        ) : null}
+                        {s.format.name}
+                        {s.price != null ? ` · ₹${s.price}` : ""}
+                      </span>
                       {s.seatsAvailable != null && <span className="text-amber-400">{s.seatsAvailable} left</span>}
                     </span>
                   ))}

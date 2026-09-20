@@ -6,15 +6,6 @@ function isSameDay(a: Date, b: Date) {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
-// THE CORE LOGIC OF THE WHOLE APP.
-// Call this every time a new Showtime is created (i.e. "tickets just went live"
-// for some movie/theatre/date/time/format combo). It finds every ACTIVE
-// Request that matches this showtime and creates a Notification for it
-// (plus attempts an email).
-//
-// In production, this is what a scheduled worker would call after polling
-// BookMyShow/District and detecting a genuinely new showtime. See
-// src/worker/poll.ts for where that would plug in.
 export async function matchShowtimeAgainstRequests(showtimeId: string) {
   const showtime = await prisma.showtime.findUnique({
     where: { id: showtimeId },
@@ -37,7 +28,8 @@ export async function matchShowtimeAgainstRequests(showtimeId: string) {
     if (req.locationId && req.locationId !== showtime.theatre.locationId) return false;
     if (theatreIds.length ? !theatreIds.includes(showtime.theatreId) : req.theatreId !== showtime.theatreId) return false;
     if (formatIds.length ? !formatIds.includes(showtime.formatId) : req.formatId !== showtime.formatId) return false;
-    if (languages.length && !languages.includes(showtime.movie.language)) return false;
+    const effectiveLang = showtime.language || showtime.movie.language;
+    if (languages.length && !languages.includes(effectiveLang)) return false;
     if (req.date && !isSameDay(req.date, showtime.date)) return false;
     if (req.timeFrom && showtime.time < req.timeFrom) return false;
     if (req.timeTo && showtime.time > req.timeTo) return false;
@@ -47,7 +39,8 @@ export async function matchShowtimeAgainstRequests(showtimeId: string) {
 
   const results = [];
   for (const req of matched) {
-    const message = `${showtime.movie.title} tickets are live at ${showtime.theatre.name} (${showtime.theatre.location.name}) on ${formatDate(showtime.date)} at ${showtime.time}, ${showtime.format.name}.`;
+    const langStr = showtime.language ? `${showtime.language} ` : "";
+    const message = `${showtime.movie.title} (${langStr}${showtime.format.name}) tickets are live at ${showtime.theatre.name} (${showtime.theatre.location.name}) on ${formatDate(showtime.date)} at ${showtime.time}.`;
 
     const notification = await prisma.notification.create({
       data: {
@@ -68,8 +61,6 @@ export async function matchShowtimeAgainstRequests(showtimeId: string) {
       await prisma.notification.update({ where: { id: notification.id }, data: { emailSent: true } });
     }
 
-    // Mark the request completed - it found its match. (If you want
-    // "notify every new matching show, not just the first", skip this line.)
     await prisma.request.update({ where: { id: req.id }, data: { status: "COMPLETED" } });
 
     results.push(notification);

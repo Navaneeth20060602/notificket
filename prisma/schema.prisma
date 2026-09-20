@@ -102,6 +102,7 @@ model Showtime {
   theatreId      String
   format         Format   @relation(fields: [formatId], references: [id])
   formatId       String
+  language       String?
   date           DateTime
   time           String // stored as "HH:MM", 24h
   price          Float?
