@@ -44,6 +44,27 @@ function normalizeDistrictUrlToCity(url: string, citySlug: string): string {
   return `${base}${slug}-in-${citySlug}${suffix}`;
 }
 
+// District movie pages always end in "-movie-tickets-MV<id>". Anything else that
+// matches district.in/movies/ (city hubs, "cinemas-in-...", "upcoming-..." lists)
+// is a listing page, not a movie page, and must never be scraped for showtimes.
+const DISTRICT_MOVIE_ID_RE = /\/movies\/[a-z0-9-]+-movie-tickets-(MV\d+)/i;
+function districtMovieId(url: string): string | null {
+  return url.match(DISTRICT_MOVIE_ID_RE)?.[1]?.toUpperCase() ?? null;
+}
+
+// Exact title match after ignoring case, punctuation and a leading "The".
+function titleKey(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/^the /, "");
+}
+
+// Set SHOWTIME_DIAG=1 in the environment to dump District serverState shapes.
+const DIAG = process.env.SHOWTIME_DIAG === "1";
+
 // 1. Scrape BookMyShow via Jina Reader (bypasses Cloudflare cleanly without browser)
 export async function scrapeBmsViaJina(
   buyticketsUrl: string,
@@ -134,6 +155,7 @@ export async function scrapeBmsViaJina(
 export async function scrapeDistrictShowtimes(
   districtUrl: string,
   fallbackLang?: string | null,
+  expectedTitle?: string | null,
 ): Promise<ScrapedShowtime[]> {
   try {
     const controller = new AbortController();
@@ -158,15 +180,28 @@ export async function scrapeDistrictShowtimes(
 
     const serverState = data.props?.pageProps?.data?.serverState;
     const movieContents = serverState?.movieContents || {};
+if (DIAG) {
+      console.log(`[showtime-sync][DIAG] ${districtUrl} serverState keys:`, Object.keys(serverState || {}));
+    }
 
-    // DIAGNOSTIC: dump the shape of serverState so we can see how city
-    // scoping actually works in the real payload, instead of guessing.
-    console.log(`[showtime-sync][DIAG] serverState top-level keys:`, Object.keys(serverState || {}));
-    console.log(`[showtime-sync][DIAG] sample movieContents entry:`, JSON.stringify(Object.values(movieContents)[0] || {}).slice(0, 800));
-    const sampleSessionsKey = Object.keys(serverState?.movieSessions || {})[0];
-    if (sampleSessionsKey) {
-      const sampleSession = serverState.movieSessions[sampleSessionsKey];
-      console.log(`[showtime-sync][DIAG] sample movieSessions[${sampleSessionsKey}]:`, JSON.stringify(sampleSession).slice(0, 800));
+    // Not a movie page with sessions (info-only page or a hub/listing page)
+    if (!Object.keys(movieContents).length && !Object.keys(serverState?.movieSessions || {}).length) {
+      console.log(`[showtime-sync] skip ${districtUrl}: no session data (keys: ${Object.keys(serverState || {}).join(",") || "none"})`);
+      return [];
+    }
+
+    // Only accept the page if it is actually the movie being tracked
+    if (expectedTitle) {
+      const wanted = titleKey(expectedTitle);
+      const pageTitles: string[] = Object.values(movieContents)
+        .map((mc: any) => (typeof mc?.name === "string" ? mc.name : ""))
+        .filter(Boolean);
+      if (!pageTitles.some((t) => titleKey(t) === wanted)) {
+        console.log(
+          `[showtime-sync] skip ${districtUrl}: page is ${JSON.stringify(pageTitles)}, tracking "${expectedTitle}"`,
+        );
+        return [];
+      }
     }
 
     // 1. Discover all languages and format groups from movieContents
@@ -452,28 +487,31 @@ export async function syncMovieShowtimes(
       for (const r of data.web?.results || []) {
         if (!r.url) continue;
 
-        // BookMyShow match: extract ET code and language
-        if (r.url.includes("in.bookmyshow.com/movies/hyderabad/")) {
-          const etMatch = r.url.match(/\/movies\/hyderabad\/([a-zA-Z0-9-]+)\/(ET[0-9]+)/);
-          if (etMatch) {
-            const slug = etMatch[1];
-            const etCode = etMatch[2];
-            const buyticketsUrl = `https://in.bookmyshow.com/movies/hyderabad/${slug}/buytickets/${etCode}/${dateCompact}`;
-            const combinedText = `${query} ${r.title || ""} ${r.description || ""}`;
-            const lang = extractLanguageFromUrlOrText(combinedText) || movieLanguage || null;
+        // BookMyShow match - Hyderabad pages for this exact movie only
+        const bmsMatch = r.url.match(/^https?:\/\/in\.bookmyshow\.com\/movies\/hyderabad\/([a-z0-9-]+)\/buytickets\/(ET\d+)/i);
+        if (bmsMatch) {
+          const bmsSlug = bmsMatch[1];
+          const etCode = bmsMatch[2].toUpperCase();
+          if (titleKey(bmsSlug.replace(/-/g, " ")) !== titleKey(movieTitle)) {
+            console.log(`[showtime-sync] skip BMS ${r.url}: slug "${bmsSlug}" is not "${movieTitle}"`);
+          } else {
+            const buyticketsUrl = `https://in.bookmyshow.com/movies/hyderabad/${bmsSlug}/buytickets/${etCode}/${dateCompact}`;
             if (!bmsUrls.some((b) => b.url === buyticketsUrl)) {
-              bmsUrls.push({ url: buyticketsUrl, language: lang });
+              bmsUrls.push({ url: buyticketsUrl, language: movieLanguage || null });
             }
           }
         }
 
         // District.in match - force the Hyderabad city segment
         if (r.url.includes("district.in/movies/")) {
-          const normalized = normalizeDistrictUrlToCity(r.url, "hyderabad");
-          if (!districtUrls.includes(normalized)) {
-            districtUrls.push(normalized);
-            if (normalized !== r.url) {
-              console.log(`[showtime-sync] normalized District URL: ${r.url} -> ${normalized}`);
+          const mvId = districtMovieId(r.url);
+          if (mvId) {
+            const normalized = normalizeDistrictUrlToCity(r.url, "hyderabad");
+            if (!districtUrls.some((u) => districtMovieId(u) === mvId)) {
+              districtUrls.push(normalized);
+              if (normalized !== r.url) {
+                console.log(`[showtime-sync] normalized District URL: ${r.url} -> ${normalized}`);
+              }
             }
           }
         }
@@ -510,7 +548,7 @@ export async function syncMovieShowtimes(
   }
 
   for (const distUrl of districtUrls) {
-    const shows = await scrapeDistrictShowtimes(distUrl, movieLanguage);
+    const shows = await scrapeDistrictShowtimes(distUrl, movieLanguage, movieTitle);
     scrapedAll.push(...shows);
   }
 
