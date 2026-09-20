@@ -55,7 +55,15 @@ export async function POST() {
         const byTmdb = await prisma.movie.findUnique({ where: { tmdbId: item.id } });
         const byTitle = byTmdb ? null : await prisma.movie.findFirst({ where: { language, title: { equals: item.title } } });
         if (byTmdb || byTitle) {
-          await prisma.movie.update({ where: { id: (byTmdb || byTitle)!.id }, data: { tmdbId: item.id, status, releaseDate, posterUrl } });
+          const existing = (byTmdb || byTitle)!;
+          // Our own showtime-sync worker promotes a movie to RUNNING only once
+          // it finds real, live showtimes for it - that's ground truth. TMDB's
+          // now_playing/upcoming split is a generic global list that doesn't
+          // know about Hyderabad-specific tracking, so a TMDB sync must never
+          // demote an already-RUNNING movie back to UPCOMING. It may still
+          // promote UPCOMING -> RUNNING if TMDB sees it before we do.
+          const nextStatus = existing.status === "RUNNING" ? "RUNNING" : status;
+          await prisma.movie.update({ where: { id: existing.id }, data: { tmdbId: item.id, status: nextStatus, releaseDate, posterUrl } });
           updated++;
         } else {
           const sameNormalisedTitle = await prisma.movie.findMany({ where: { language } }).then((movies) => movies.find((movie) => normalizeName(movie.title) === normalizeName(item.title!)));
