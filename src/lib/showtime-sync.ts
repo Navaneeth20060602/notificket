@@ -37,6 +37,13 @@ function extractLanguageFromUrlOrText(str: string): string | null {
   return null;
 }
 
+function normalizeDistrictUrlToCity(url: string, citySlug: string): string {
+  const match = url.match(/^(https?:\/\/[^/]+\/movies\/)([a-z0-9-]+?)(?:-in-[a-z-]+)?(-movie-tickets-MV\d+.*)$/i);
+  if (!match) return url;
+  const [, base, slug, suffix] = match;
+  return `${base}${slug}-in-${citySlug}${suffix}`;
+}
+
 // 1. Scrape BookMyShow via Jina Reader (bypasses Cloudflare cleanly without browser)
 export async function scrapeBmsViaJina(
   buyticketsUrl: string,
@@ -450,9 +457,15 @@ export async function syncMovieShowtimes(
           }
         }
 
-        // District.in match
-        if (r.url.includes("district.in/movies/") && !districtUrls.includes(r.url)) {
-          districtUrls.push(r.url);
+        // District.in match - force the Hyderabad city segment
+        if (r.url.includes("district.in/movies/")) {
+          const normalized = normalizeDistrictUrlToCity(r.url, "hyderabad");
+          if (!districtUrls.includes(normalized)) {
+            districtUrls.push(normalized);
+            if (normalized !== r.url) {
+              console.log(`[showtime-sync] normalized District URL: ${r.url} -> ${normalized}`);
+            }
+          }
         }
 
         // Times of India match
