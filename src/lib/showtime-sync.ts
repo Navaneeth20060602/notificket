@@ -173,9 +173,18 @@ export async function scrapeDistrictShowtimes(
           const theatreName = (c.entityName || "").replace(/\s+/g, " ").trim();
           if (!theatreName) continue;
           for (const s of c.sessions || []) {
-            if (!s.showTime || s.showTime.length < 16) continue;
-            const date = s.showTime.slice(0, 10);
-            const time = s.showTime.slice(11, 16);
+            if (!s.showTime) continue;
+            const showDateTime = new Date(s.showTime);
+            if (Number.isNaN(showDateTime.valueOf())) continue;
+            // District's API returns UTC timestamps - convert to IST before slicing
+            const istParts = new Intl.DateTimeFormat("en-CA", {
+              timeZone: "Asia/Kolkata",
+              year: "numeric", month: "2-digit", day: "2-digit",
+              hour: "2-digit", minute: "2-digit", hour12: false,
+            }).formatToParts(showDateTime);
+            const get = (t: string) => istParts.find((p) => p.type === t)?.value || "";
+            const date = `${get("year")}-${get("month")}-${get("day")}`;
+            const time = `${get("hour")}:${get("minute")}`;
             let format = s.scrnFmt || "2D";
             if (/\bIMAX\b/i.test(theatreName)) format = "IMAX";
             else if (/\b4DX\b/i.test(theatreName)) format = "4DX";
