@@ -159,6 +159,16 @@ export async function scrapeDistrictShowtimes(
     const serverState = data.props?.pageProps?.data?.serverState;
     const movieContents = serverState?.movieContents || {};
 
+    // DIAGNOSTIC: dump the shape of serverState so we can see how city
+    // scoping actually works in the real payload, instead of guessing.
+    console.log(`[showtime-sync][DIAG] serverState top-level keys:`, Object.keys(serverState || {}));
+    console.log(`[showtime-sync][DIAG] sample movieContents entry:`, JSON.stringify(Object.values(movieContents)[0] || {}).slice(0, 800));
+    const sampleSessionsKey = Object.keys(serverState?.movieSessions || {})[0];
+    if (sampleSessionsKey) {
+      const sampleSession = serverState.movieSessions[sampleSessionsKey];
+      console.log(`[showtime-sync][DIAG] sample movieSessions[${sampleSessionsKey}]:`, JSON.stringify(sampleSession).slice(0, 800));
+    }
+
     // 1. Discover all languages and format groups from movieContents
     const langGroups: { language: string; fmtGrpId: string; number_of_sessions?: number }[] = [];
     for (const contentId of Object.keys(movieContents)) {
