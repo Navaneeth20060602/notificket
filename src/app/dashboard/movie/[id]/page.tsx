@@ -127,14 +127,8 @@ export default function MovieDetailPage() {
   // Check if the movie is currently running (active)
   const isRunning = movie.status === "RUNNING";
   
-  // Check if release date has passed (hide pre-release option after release)
-  const releaseDatePassed = movie.releaseDate && new Date(movie.releaseDate) <= new Date();
-  
-  // Show pre-release checkbox if:
-  // 1. Movie has showtimes on at least one platform, OR
-  // 2. Movie is running but not yet in all theatres (hasAnyShowtimes is true)
-  // AND release date hasn't passed yet
-  const showPreReleaseOption = (isRunning && hasAnyShowtimes && !releaseDatePassed);
+  // Show pre-release checkbox if movie is running and has showtimes
+  const showPreReleaseOption = (isRunning && hasAnyShowtimes);
   // Check if movie is currently showing on District
   const hasDistrictShowtimes = (movie.showtimes || []).some((s: any) => s.platform === "DISTRICT");
   // Check if movie is currently showing on BookMyShow
@@ -427,18 +421,7 @@ export default function MovieDetailPage() {
               </>
             )}
           </div>
-        ) : submitted ? (
-          <div className="card p-6 mt-8">
-            <p className="font-medium">You&apos;re all set.</p>
-            <p className="text-muted text-sm mt-1">
-              We&apos;ll alert you the moment matching tickets go live on BookMyShow or District. Manage this anytime from{" "}
-              <a href="/dashboard/requests" className="text-brand-400">
-                My requests
-              </a>
-              .
-            </p>
-          </div>
-        ) : (
+
           <form onSubmit={submitRequest} className="card p-6 mt-8 space-y-4">
             <h2 className="text-lg font-medium">Tell us what you want</h2>
             <p className="text-sm text-muted -mt-2">
@@ -647,7 +630,6 @@ export default function MovieDetailPage() {
               {submitting ? "Saving..." : preRelease ? "Notify me on release" : "Alert me when tickets are live"}
             </button>
           </form>
-        )}
       </div>
     </main>
   );
