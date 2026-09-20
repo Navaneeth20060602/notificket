@@ -171,6 +171,14 @@ export default function MovieDetailPage() {
   }
   const groupedTheatres = Array.from(grouped.values());
 
+  // Derive which booking platforms have shows for this movie
+  const platformSet = new Set<string>();
+  nonPastDayShowtimes.forEach((s: any) => {
+    if (s.platform) s.platform.split(",").forEach((p: string) => platformSet.add(p.trim()));
+  });
+  const hasBms = platformSet.has("BMS");
+  const hasDistrict = platformSet.has("DISTRICT");
+
   return (
     <main className="min-h-screen bg-page">
       <Navbar userName={user.name} role={user.role} />
@@ -180,8 +188,33 @@ export default function MovieDetailPage() {
           {movie.language}
           {availableLanguages.length > 0 &&
             ` · Available in: ${Array.from(new Set([movie.language, ...availableLanguages])).join(", ")}`}
-          &middot; {movie.status === "RUNNING" ? "Now showing" : "Upcoming"}
+          {" · "}{movie.status === "RUNNING" ? "Now showing" : "Upcoming"}
         </p>
+        {(hasBms || hasDistrict) && (
+          <div className="flex items-center gap-2 mt-2 flex-wrap">
+            <span className="text-xs text-muted">Book on:</span>
+            {hasBms && (
+              <a
+                href="https://in.bookmyshow.com/movies/hyderabad"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-xs bg-red-900/40 border border-red-700/50 text-red-300 rounded-full px-3 py-1 hover:bg-red-900/60 transition-colors"
+              >
+                🎟 BookMyShow
+              </a>
+            )}
+            {hasDistrict && (
+              <a
+                href="https://www.district.in"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-xs bg-purple-900/40 border border-purple-700/50 text-purple-300 rounded-full px-3 py-1 hover:bg-purple-900/60 transition-colors"
+              >
+                🎬 District
+              </a>
+            )}
+          </div>
+        )}
 
         {movie.status === "RUNNING" ? (
           <div className="mt-8 space-y-3">

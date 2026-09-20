@@ -17,6 +17,7 @@ export type ScrapedShowtime = {
   language: string | null;
   price?: number | null;
   seatsAvailable?: number | null;
+  platform?: string; // "BMS" | "DISTRICT" | "TOI"
 };
 
 function parseTo24h(timeStr: string): string | null {
@@ -100,6 +101,7 @@ export async function scrapeBmsViaJina(
             time: time24,
             format: fmt,
             language: detectedLanguage || null,
+            platform: "BMS",
           });
         }
       }
@@ -178,6 +180,7 @@ export async function scrapeDistrictShowtimes(
             language: defaultLang,
             price: minPrice,
             seatsAvailable,
+            platform: "DISTRICT",
           });
         }
       }
@@ -250,7 +253,7 @@ export async function scrapeToiShowtimes(
           const key = `${theatreName}|${pageDate}|${time24}|${format}|${language}`;
           if (!seen.has(key)) {
             seen.add(key);
-            results.push({ theatreName, date: pageDate, time: time24, format, language });
+            results.push({ theatreName, date: pageDate, time: time24, format, language, platform: "TOI" });
           }
         }
       }
@@ -418,6 +421,7 @@ export async function syncMovieShowtimes(
           time: item.time,
           price: item.price ?? null,
           seatsAvailable: item.seatsAvailable ?? null,
+          platform: item.platform ?? null,
         },
       });
       try {
@@ -427,11 +431,17 @@ export async function syncMovieShowtimes(
       }
       totalAdded++;
     } else {
-      // Update missing language, price or seats if newly discovered
+      // Update missing language, price, seats, or platform if newly discovered
       const updates: any = {};
       if (!existing.language && item.language) updates.language = item.language;
       if (existing.price == null && item.price != null) updates.price = item.price;
       if (existing.seatsAvailable == null && item.seatsAvailable != null) updates.seatsAvailable = item.seatsAvailable;
+      // Merge platform tags: e.g. existing="BMS" + new="DISTRICT" => "BMS,DISTRICT"
+      if (item.platform && (!existing.platform || !existing.platform.split(",").includes(item.platform))) {
+        const parts = existing.platform ? existing.platform.split(",") : [];
+        parts.push(item.platform);
+        updates.platform = parts.join(",");
+      }
 
       if (Object.keys(updates).length > 0) {
         await prisma.showtime.update({ where: { id: existing.id }, data: updates });

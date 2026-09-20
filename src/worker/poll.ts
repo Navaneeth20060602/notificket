@@ -1,4 +1,4 @@
-﻿import { prisma } from "../lib/db";
+import { prisma } from "../lib/db";
 import { syncMovieShowtimes } from "../lib/showtime-sync";
 
 const CHECK_EVERY_MINUTES = Number(process.env.MONITOR_INTERVAL_MINUTES || 20);
@@ -6,6 +6,8 @@ const MAX_JOBS_PER_CYCLE = Number(process.env.MONITOR_MAX_JOBS_PER_CYCLE || 3);
 const nextCheck = (minutes = CHECK_EVERY_MINUTES) => new Date(Date.now() + minutes * 60_000);
 
 export async function pollAllTrackedMovies() {
+  // 1. Ensure a monitor job exists for every active request's movie+location
+  //    This covers BOTH running and upcoming movies with user alert requests.
   const tracked = await prisma.request.findMany({
     where: { status: "ACTIVE" },
     select: { movieId: true, locationId: true },
@@ -22,6 +24,7 @@ export async function pollAllTrackedMovies() {
     }
   }
 
+  // 2. Also queue all RUNNING movies in Hyderabad for continuous showtime sync
   const hyderabad = await prisma.location.findFirst({ where: { name: "Hyderabad" }, select: { id: true } });
   let runningMovieCount = 0;
   if (hyderabad) {
@@ -36,6 +39,9 @@ export async function pollAllTrackedMovies() {
     }
   }
 
+  // 3. Execute due monitor jobs (handles both RUNNING movies and UPCOMING movies with requests)
+  //    For UPCOMING movies: syncMovieShowtimes searches BMS + District + TOI — if tickets are
+  //    found on either platform, shows are saved, movie status becomes RUNNING, and users are notified.
   const jobs = await prisma.monitorJob.findMany({
     where: { status: "ACTIVE", nextCheckAt: { lte: new Date() } },
     include: { movie: true },
@@ -48,14 +54,20 @@ export async function pollAllTrackedMovies() {
     try {
       const fastAdded = await syncMovieShowtimes(job.movieId, job.movie.title, job.movie.language);
       added += fastAdded;
+
+      const isUpcoming = job.movie.status === "UPCOMING";
+      const ticketsFound = fastAdded > 0;
+
       await prisma.monitorJob.update({
         where: { id: job.id },
         data: {
           lastCheckedAt: new Date(),
           nextCheckAt: nextCheck(),
-          failureCount: fastAdded > 0 ? 0 : job.failureCount,
-          lastMessage: fastAdded > 0
-            ? `${fastAdded} new showtimes added via TOI.`
+          failureCount: ticketsFound ? 0 : job.failureCount,
+          lastMessage: ticketsFound
+            ? `${fastAdded} new showtimes added via BMS + District + TOI.`
+            : isUpcoming
+            ? "No tickets yet on BookMyShow or District; will check again next cycle."
             : "No new showtimes found; will retry next cycle.",
         },
       });

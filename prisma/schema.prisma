@@ -107,6 +107,7 @@ model Showtime {
   time           String // stored as "HH:MM", 24h
   price          Float?
   seatsAvailable Int?
+  platform       String?  // "BMS" | "DISTRICT" | "TOI" | comma-separated combinations
   createdAt      DateTime @default(now())
 
   notifications Notification[]
