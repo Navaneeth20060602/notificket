@@ -7,7 +7,7 @@ const TOI_CITY_SLUG = "hyderabad";
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
-const DEFAULT_SERP_KEY = "gt_live_553d3b6148d2d13e60d97ef9b5d5019630712fd1";
+const DEFAULT_SERP_KEY = ""; // no working fallback - SERP_SEARCH_API_KEY must be set in Railway
 
 export type ScrapedShowtime = {
   theatreName: string;
@@ -416,18 +416,23 @@ export async function syncMovieShowtimes(
       hl: "en",
     });
     try {
-      const res = await fetch(`https://api.serpsearch.com/api/v1/search?${params}`, {
-        headers: { Authorization: `Bearer ${key}` },
+      const braveParams = new URLSearchParams({
+        q: query,
+        country: "IN",
+        search_lang: "en",
+      });
+      const res = await fetch(`https://api.search.brave.com/res/v1/web/search?${braveParams}`, {
+        headers: { Accept: "application/json", "X-Subscription-Token": key },
         cache: "no-store",
       });
       if (!res.ok) {
-        console.warn(`[showtime-sync] SERP search failed for "${query}": HTTP ${res.status} ${await res.text().catch(() => "")}`);
+        console.warn(`[showtime-sync] Brave search failed for "${query}": HTTP ${res.status} ${await res.text().catch(() => "")}`);
         continue;
       }
       const data = (await res.json()) as {
-        organic_results?: { title?: string; url?: string; snippet?: string; description?: string }[];
+        web?: { results?: { title?: string; url?: string; description?: string }[] };
       };
-      for (const r of data.organic_results || []) {
+      for (const r of data.web?.results || []) {
         if (!r.url) continue;
 
         // BookMyShow match: extract ET code and language
@@ -437,7 +442,7 @@ export async function syncMovieShowtimes(
             const slug = etMatch[1];
             const etCode = etMatch[2];
             const buyticketsUrl = `https://in.bookmyshow.com/movies/hyderabad/${slug}/buytickets/${etCode}/${dateCompact}`;
-            const combinedText = `${query} ${r.title || ""} ${r.snippet || ""} ${r.description || ""}`;
+            const combinedText = `${query} ${r.title || ""} ${r.description || ""}`;
             const lang = extractLanguageFromUrlOrText(combinedText) || movieLanguage || null;
             if (!bmsUrls.some((b) => b.url === buyticketsUrl)) {
               bmsUrls.push({ url: buyticketsUrl, language: lang });
