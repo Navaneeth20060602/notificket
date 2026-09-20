@@ -420,7 +420,10 @@ export async function syncMovieShowtimes(
         headers: { Authorization: `Bearer ${key}` },
         cache: "no-store",
       });
-      if (!res.ok) continue;
+      if (!res.ok) {
+        console.warn(`[showtime-sync] SERP search failed for "${query}": HTTP ${res.status} ${await res.text().catch(() => "")}`);
+        continue;
+      }
       const data = (await res.json()) as {
         organic_results?: { title?: string; url?: string; snippet?: string; description?: string }[];
       };
@@ -457,11 +460,12 @@ export async function syncMovieShowtimes(
           toiUrls.push(r.url);
         }
       }
-    } catch {
-      // Continue to next query
+    } catch (err) {
+      console.warn(`[showtime-sync] SERP search threw for "${query}":`, err);
     }
   }
 
+  console.log(`[showtime-sync] ${movieTitle}: discovered ${bmsUrls.length} BMS url(s), ${districtUrls.length} District url(s), ${toiUrls.length} TOI url(s)`);
   // Scrape across all discovered sources concurrently
   const scrapedAll: ScrapedShowtime[] = [];
 
