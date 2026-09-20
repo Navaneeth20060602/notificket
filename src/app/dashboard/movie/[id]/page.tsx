@@ -26,6 +26,7 @@ export default function MovieDetailPage() {
   const [formats, setFormats] = useState<any[]>([]);
   const [showtimeDate, setShowtimeDate] = useState("");
   const [selectedLanguage, setSelectedLanguage] = useState("");
+  const [selectedPlatform, setSelectedPlatform] = useState(""); // "" = All, "BMS", "DISTRICT"
   const [hideCompleted, setHideCompleted] = useState(false);
   const [showtimeTheatreSearch, setShowtimeTheatreSearch] = useState("");
 
@@ -130,40 +131,47 @@ export default function MovieDetailPage() {
   const nowDate = todayInputDate();
   const nowTime = new Date().toTimeString().slice(0, 5);
 
-  // 1. Exclude previous day shows (only keep today and future dates)
+  // Only keep today and future dates
   const nonPastDayShowtimes = (movie.showtimes || []).filter((s: any) => {
     return toInputDate(s.date) >= nowDate;
   });
 
-  // Extract all distinct languages available across all current showtimes
+  // Distinct languages
   const availableLanguages: string[] = Array.from(
     new Set<string>(
-      nonPastDayShowtimes
-        .map((s: any) => s.language)
-        .filter(Boolean)
+      nonPastDayShowtimes.map((s: any) => s.language).filter(Boolean)
     )
   );
 
+  // Distinct dates
   const showtimeDates: string[] = Array.from(
     new Set<string>(nonPastDayShowtimes.map((s: any) => toInputDate(s.date)))
   ).sort();
 
-  // Filter for the selected date and filters
-  const visibleShowtimes = nonPastDayShowtimes
+  // Which platforms have shows
+  const platformSet = new Set<string>();
+  nonPastDayShowtimes.forEach((s: any) => {
+    if (s.platform) s.platform.split(",").forEach((p: string) => platformSet.add(p.trim()));
+  });
+  const hasBms = platformSet.has("BMS");
+  const hasDistrict = platformSet.has("DISTRICT");
+
+  // Filter by date, language, completed, theatre search
+  const baseFiltered = nonPastDayShowtimes
     .filter((s: any) => toInputDate(s.date) === showtimeDate)
     .filter((s: any) => !selectedLanguage || s.language === selectedLanguage)
     .filter((s: any) => !hideCompleted || (toInputDate(s.date) === nowDate ? s.time > nowTime : true))
     .filter((s: any) => s.theatre.name.toLowerCase().includes(showtimeTheatreSearch.trim().toLowerCase()))
     .sort((a: any, b: any) => a.time.localeCompare(b.time) || a.theatre.name.localeCompare(b.theatre.name));
 
-  const filteredTheatres = theatres.filter((theatre) =>
-    theatre.name.toLowerCase().includes(theatreSearch.toLowerCase())
-  );
-  const selectedTheatreNames = theatres
-    .filter((theatre) => theatreIds.includes(theatre.id))
-    .map((theatre) => theatre.name);
+  // Further filter by platform tab
+  const visibleShowtimes = baseFiltered.filter((s: any) => {
+    if (!selectedPlatform) return true;
+    if (!s.platform) return false;
+    return s.platform.split(",").map((p: string) => p.trim()).includes(selectedPlatform);
+  });
 
-  // Group visible showtimes by theatre
+  // Group by theatre
   const grouped = new Map<string, { theatre: any; showtimes: any[] }>();
   for (const s of visibleShowtimes) {
     if (!grouped.has(s.theatre.id)) grouped.set(s.theatre.id, { theatre: s.theatre, showtimes: [] });
@@ -171,13 +179,12 @@ export default function MovieDetailPage() {
   }
   const groupedTheatres = Array.from(grouped.values());
 
-  // Derive which booking platforms have shows for this movie
-  const platformSet = new Set<string>();
-  nonPastDayShowtimes.forEach((s: any) => {
-    if (s.platform) s.platform.split(",").forEach((p: string) => platformSet.add(p.trim()));
-  });
-  const hasBms = platformSet.has("BMS");
-  const hasDistrict = platformSet.has("DISTRICT");
+  const filteredTheatres = theatres.filter((theatre) =>
+    theatre.name.toLowerCase().includes(theatreSearch.toLowerCase())
+  );
+  const selectedTheatreNames = theatres
+    .filter((theatre) => theatreIds.includes(theatre.id))
+    .map((theatre) => theatre.name);
 
   return (
     <main className="min-h-screen bg-page">
@@ -190,31 +197,6 @@ export default function MovieDetailPage() {
             ` · Available in: ${Array.from(new Set([movie.language, ...availableLanguages])).join(", ")}`}
           {" · "}{movie.status === "RUNNING" ? "Now showing" : "Upcoming"}
         </p>
-        {(hasBms || hasDistrict) && (
-          <div className="flex items-center gap-2 mt-2 flex-wrap">
-            <span className="text-xs text-muted">Book on:</span>
-            {hasBms && (
-              <a
-                href="https://in.bookmyshow.com/movies/hyderabad"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-xs bg-red-900/40 border border-red-700/50 text-red-300 rounded-full px-3 py-1 hover:bg-red-900/60 transition-colors"
-              >
-                🎟 BookMyShow
-              </a>
-            )}
-            {hasDistrict && (
-              <a
-                href="https://www.district.in"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-xs bg-purple-900/40 border border-purple-700/50 text-purple-300 rounded-full px-3 py-1 hover:bg-purple-900/60 transition-colors"
-              >
-                🎬 District
-              </a>
-            )}
-          </div>
-        )}
 
         {movie.status === "RUNNING" ? (
           <div className="mt-8 space-y-3">
@@ -260,6 +242,50 @@ export default function MovieDetailPage() {
                     </button>
                   ))}
                 </div>
+
+                {/* Platform tabs — BookMyShow / District / All */}
+                {(hasBms || hasDistrict) && (
+                  <div className="flex items-center gap-2 overflow-x-auto py-1" aria-label="Filter by platform">
+                    <span className="text-xs text-muted font-medium shrink-0">Platform:</span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPlatform("")}
+                      className={
+                        selectedPlatform === ""
+                          ? "btn-primary !py-1 px-3 text-xs whitespace-nowrap"
+                          : "card !py-1 px-3 text-xs hover:border-brand-400 whitespace-nowrap"
+                      }
+                    >
+                      All
+                    </button>
+                    {hasBms && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedPlatform("BMS")}
+                        className={
+                          selectedPlatform === "BMS"
+                            ? "btn-primary !py-1 px-3 text-xs whitespace-nowrap"
+                            : "card !py-1 px-3 text-xs hover:border-red-500/60 whitespace-nowrap"
+                        }
+                      >
+                        🎟 BookMyShow
+                      </button>
+                    )}
+                    {hasDistrict && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedPlatform("DISTRICT")}
+                        className={
+                          selectedPlatform === "DISTRICT"
+                            ? "btn-primary !py-1 px-3 text-xs whitespace-nowrap"
+                            : "card !py-1 px-3 text-xs hover:border-purple-500/60 whitespace-nowrap"
+                        }
+                      >
+                        🎬 District
+                      </button>
+                    )}
+                  </div>
+                )}
 
                 {/* Multilingual filter tabs if multiple languages */}
                 {availableLanguages.length > 1 && (
@@ -321,7 +347,8 @@ export default function MovieDetailPage() {
             {nonPastDayShowtimes.length > 0 && visibleShowtimes.length === 0 && (
               <p className="text-muted text-sm">
                 No theatres match that filter on {formatDate(showtimeDate)}
-                {selectedLanguage ? ` for ${selectedLanguage}` : ""}.
+                {selectedLanguage ? ` for ${selectedLanguage}` : ""}
+                {selectedPlatform === "BMS" ? " on BookMyShow" : selectedPlatform === "DISTRICT" ? " on District" : ""}.
               </p>
             )}
 
@@ -336,6 +363,10 @@ export default function MovieDetailPage() {
                 <div className="flex flex-wrap gap-2">
                   {times.map((s: any) => {
                     const isEnded = toInputDate(s.date) === nowDate && s.time <= nowTime;
+                    // Determine platform badge for this show
+                    const platforms = s.platform ? s.platform.split(",").map((p: string) => p.trim()) : [];
+                    const showBmsBadge = platforms.includes("BMS");
+                    const showDistrictBadge = platforms.includes("DISTRICT");
                     return (
                       <span
                         key={s.id}
@@ -360,9 +391,20 @@ export default function MovieDetailPage() {
                           <span className="text-[10px] text-muted">Ended</span>
                         ) : s.seatsAvailable != null ? (
                           <span className="text-[10px] text-amber-400 font-medium">
-                            {s.seatsAvailable} left
+                            {s.seatsAvailable} seats
                           </span>
                         ) : null}
+                        {/* Platform badges on each show pill */}
+                        {(showBmsBadge || showDistrictBadge) && !selectedPlatform && (
+                          <span className="flex gap-1 mt-1">
+                            {showBmsBadge && (
+                              <span className="text-[9px] bg-red-900/50 text-red-300 rounded px-1">BMS</span>
+                            )}
+                            {showDistrictBadge && (
+                              <span className="text-[9px] bg-purple-900/50 text-purple-300 rounded px-1">District</span>
+                            )}
+                          </span>
+                        )}
                       </span>
                     );
                   })}
