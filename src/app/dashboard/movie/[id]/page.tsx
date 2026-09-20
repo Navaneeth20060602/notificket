@@ -388,7 +388,9 @@ export default function MovieDetailPage() {
                                   {s.seatsAvailable} seats available
                                 </span>
                               ) : (
-                                <span className="text-[10px] text-muted mt-0.5">Available</span>
+                                <span className="text-[10px] text-muted mt-0.5">
+                                  {s.platform === "BMS" ? "Check seats on BookMyShow" : "Available"}
+                                </span>
                               )}
                             </div>
                           );

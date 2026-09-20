@@ -40,15 +40,10 @@ function extractLanguageFromUrlOrText(str: string): string | null {
 // 1. Scrape BookMyShow via Jina Reader (bypasses Cloudflare cleanly without browser)
 export async function scrapeBmsViaJina(
   buyticketsUrl: string,
+  dateStr: string,
   detectedLanguage?: string | null,
 ): Promise<ScrapedShowtime[]> {
   try {
-    const today = new Date();
-    const yyyy = today.getFullYear();
-    const mm = String(today.getMonth() + 1).padStart(2, "0");
-    const dd = String(today.getDate()).padStart(2, "0");
-    const todayDash = `${yyyy}-${mm}-${dd}`;
-
     const jinaUrl = `https://r.jina.ai/${buyticketsUrl}`;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 20_000);
@@ -64,12 +59,18 @@ export async function scrapeBmsViaJina(
     const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
 
     const results: ScrapedShowtime[] = [];
-    let currentCinema = null;
+    let currentCinema: string | null = null;
+    let currentCinemaLang: string | null = detectedLanguage || null;
     let currentFormat = "2D";
+    let linesSinceCinema = 0;
     const timeRegex = /^(?:0?[1-9]|1[0-2]):[0-5]\d\s*(?:AM|PM)$/i;
+    const priceRegex = /₹\s?(\d{2,4})/;
+    const seatsRegex = /(\d{1,4})\s*seats?\s*(available|left)/i;
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
+      linesSinceCinema++;
+
       if (line.includes("bookmyshow.com/cinemas/hyderabad/")) {
         const nextLine = lines[i + 1]
           ? lines[i + 1]
@@ -79,28 +80,37 @@ export async function scrapeBmsViaJina(
           : "";
         if (nextLine && !nextLine.startsWith("http") && !nextLine.startsWith("!")) {
           currentCinema = nextLine;
+          currentCinemaLang = extractLanguageFromUrlOrText(nextLine) || detectedLanguage || null;
           currentFormat = "2D";
+          linesSinceCinema = 0;
           if (/\bIMAX\b/i.test(currentCinema)) currentFormat = "IMAX";
           else if (/\b4DX\b/i.test(currentCinema)) currentFormat = "4DX";
           else if (/\bATMOS\b/i.test(currentCinema) || /\bDolby\b/i.test(currentCinema))
             currentFormat = "Dolby Atmos";
         }
       } else if (timeRegex.test(line) && currentCinema) {
+        if (linesSinceCinema > 25) continue;
+
         const time24 = parseTo24h(line);
         let fmt = currentFormat;
-        const next = lines[i + 1] || "";
-        if (/\bIMAX\b/i.test(next)) fmt = "IMAX";
-        else if (/\b4DX\b/i.test(next)) fmt = "4DX";
-        else if (/\bATMOS\b/i.test(next) || /\bDolby\b/i.test(next)) fmt = "Dolby Atmos";
-        else if (/\b3D\b/i.test(next)) fmt = "3D";
+        const lookahead = lines.slice(i + 1, i + 5).join(" ");
+        if (/\bIMAX\b/i.test(lookahead)) fmt = "IMAX";
+        else if (/\b4DX\b/i.test(lookahead)) fmt = "4DX";
+        else if (/\bATMOS\b/i.test(lookahead) || /\bDolby\b/i.test(lookahead)) fmt = "Dolby Atmos";
+        else if (/\b3D\b/i.test(lookahead)) fmt = "3D";
+
+        const priceMatch = lookahead.match(priceRegex);
+        const seatsMatch = lookahead.match(seatsRegex);
 
         if (time24) {
           results.push({
             theatreName: currentCinema,
-            date: todayDash,
+            date: dateStr,
             time: time24,
             format: fmt,
-            language: detectedLanguage || null,
+            language: currentCinemaLang,
+            price: priceMatch ? Number(priceMatch[1]) : null,
+            seatsAvailable: seatsMatch ? Number(seatsMatch[1]) : null,
             platform: "BMS",
           });
         }
@@ -438,8 +448,15 @@ export async function syncMovieShowtimes(
   const scrapedAll: ScrapedShowtime[] = [];
 
   for (const bms of bmsUrls) {
-    const shows = await scrapeBmsViaJina(bms.url, bms.language);
-    scrapedAll.push(...shows);
+    for (let offset = 0; offset < 4; offset++) {
+      const d = new Date();
+      d.setDate(d.getDate() + offset);
+      const dCompact = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+      const dDash = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const dateUrl = bms.url.replace(/\/\d{8}$/, `/${dCompact}`);
+      const shows = await scrapeBmsViaJina(dateUrl, dDash, bms.language);
+      scrapedAll.push(...shows);
+    }
   }
 
   for (const distUrl of districtUrls) {
