@@ -121,8 +121,20 @@ export default function MovieDetailPage() {
 
   if (!user || !movie) return null;
 
-  // Check if movie has showtimes on any platform (for pre-release option visibility)
+  // Check if movie has showtimes on any platform
   const hasAnyShowtimes = (movie.showtimes || []).length > 0;
+  
+  // Check if the movie is currently running (active)
+  const isRunning = movie.status === "RUNNING";
+  
+  // Check if release date has passed (hide pre-release option after release)
+  const releaseDatePassed = movie.releaseDate && new Date(movie.releaseDate) <= new Date();
+  
+  // Show pre-release checkbox if:
+  // 1. Movie has showtimes on at least one platform, OR
+  // 2. Movie is running but not yet in all theatres (hasAnyShowtimes is true)
+  // AND release date hasn't passed yet
+  const showPreReleaseOption = (isRunning && hasAnyShowtimes && !releaseDatePassed);
   // Check if movie is currently showing on District
   const hasDistrictShowtimes = (movie.showtimes || []).some((s: any) => s.platform === "DISTRICT");
   // Check if movie is currently showing on BookMyShow
@@ -551,7 +563,7 @@ export default function MovieDetailPage() {
               </div>
             </div>
 
-            {hasAnyShowtimes && (
+            {showPreReleaseOption && (
               <div className="card p-4 bg-surface border-subtle">
                 <label className="flex items-start gap-3 cursor-pointer">
                   <input
@@ -582,7 +594,6 @@ export default function MovieDetailPage() {
                   onChange={(e) => setDate(e.target.value)}
                   onClick={(e) => e.currentTarget.showPicker?.()}
                   onFocus={(e) => e.currentTarget.showPicker?.()}
-                  required
                 />
               </div>
             )}

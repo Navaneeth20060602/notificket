@@ -34,7 +34,7 @@ const schema = z.object({
   theatreIds: z.array(z.string()).min(1),
   formatIds: z.array(z.string()).min(1),
   languages: z.array(z.string()).min(1),
-  date: z.string().min(1),
+  date: z.string().optional().nullable(),
   timeFrom: z.string().optional().nullable(),
   timeTo: z.string().optional().nullable(),
   maxPrice: z.number().optional().nullable(),
@@ -69,7 +69,8 @@ export async function POST(req: NextRequest) {
   }
   const data = parsed.data;
 
-  if (!data.preRelease) {
+  // Validate date: future dates only for non-pre-release requests
+  if (!data.preRelease && data.date) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     if (new Date(data.date) < today) {
