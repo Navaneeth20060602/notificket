@@ -85,16 +85,27 @@ export async function scrapeBmsViaJina(
   try {
     const jinaUrl = `https://r.jina.ai/${buyticketsUrl}`;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 20_000);
+    const timeout = setTimeout(() => controller.abort(), 35_000);
 
     const res = await fetch(jinaUrl, {
-      headers: { Accept: "text/plain" },
+      headers: { Accept: "text/event-stream" },
       cache: "no-store",
       signal: controller.signal,
     }).finally(() => clearTimeout(timeout));
 
     if (!res.ok) return [];
-    const text = await res.text();
+    const raw = await res.text();
+
+    // Streaming mode sends the page as a series of growing snapshots as
+    // BookMyShow's lazy-loaded theatre list keeps rendering - each "data:"
+    // event is more complete than the last. The final event is the fully
+    // loaded page (all theatres); non-streaming mode was returning the
+    // very first, mostly-empty snapshot instead.
+    const events = raw
+      .split("\n\n")
+      .map((e) => e.replace(/^data:\s?/, "").trim())
+      .filter(Boolean);
+    const text = events.length > 0 ? events[events.length - 1] : raw;
     const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
 
     const results: ScrapedShowtime[] = [];
