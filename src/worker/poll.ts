@@ -50,9 +50,21 @@ export async function pollAllTrackedMovies() {
     include: { movie: true },
     orderBy: { nextCheckAt: "asc" },
   });
+
+  // Prioritize by proximity to release date: a movie releasing in 3 days (or
+  // one that just released) changes constantly - new theatres and showtimes
+  // keep appearing - so it's worth checking often. A movie that released 2+
+  // weeks ago has usually stabilized, so it's fine to check it less urgently
+  // and let fresher releases use the limited per-cycle slots first.
+  const byReleaseUrgency = (a: (typeof dueJobs)[number], b: (typeof dueJobs)[number]) => {
+    const aTime = a.movie.releaseDate ? new Date(a.movie.releaseDate).getTime() : -Infinity;
+    const bTime = b.movie.releaseDate ? new Date(b.movie.releaseDate).getTime() : -Infinity;
+    return bTime - aTime; // soonest-to-release / most recently released first, oldest (or unknown date) last
+  };
+
   const jobs = [
-    ...dueJobs.filter((j) => requestedMovieIds.has(j.movieId)),
-    ...dueJobs.filter((j) => !requestedMovieIds.has(j.movieId)),
+    ...dueJobs.filter((j) => requestedMovieIds.has(j.movieId)).sort(byReleaseUrgency),
+    ...dueJobs.filter((j) => !requestedMovieIds.has(j.movieId)).sort(byReleaseUrgency),
   ].slice(0, MAX_JOBS_PER_CYCLE);
 
   let added = 0;
