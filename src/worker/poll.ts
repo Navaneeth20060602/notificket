@@ -5,6 +5,20 @@ const CHECK_EVERY_MINUTES = Number(process.env.MONITOR_INTERVAL_MINUTES || 20);
 const MAX_JOBS_PER_CYCLE = Number(process.env.MONITOR_MAX_JOBS_PER_CYCLE || 3);
 const nextCheck = (minutes = CHECK_EVERY_MINUTES) => new Date(Date.now() + minutes * 60_000);
 
+// How urgently a movie needs checking, based on how close it is to release.
+// A movie releasing soon (or that just released) is where theatre/showtime
+// data actually changes day to day, so it's checked at full frequency.
+// A movie that's been out 2+ weeks has usually stabilized, so it's checked
+// far less often - freeing up per-cycle slots for movies that matter more
+// right now, instead of every movie sharing the same fixed clock.
+function intervalForMovie(releaseDate: Date | null): number {
+  if (!releaseDate) return CHECK_EVERY_MINUTES;
+  const daysSinceRelease = (Date.now() - new Date(releaseDate).getTime()) / 86_400_000;
+  if (daysSinceRelease < 7) return CHECK_EVERY_MINUTES; // releasing soon, or released <7 days ago: full frequency
+  if (daysSinceRelease < 14) return CHECK_EVERY_MINUTES * 3; // 1-2 weeks old: check 1/3 as often
+  return CHECK_EVERY_MINUTES * 8; // 2+ weeks old: check 1/8 as often
+}
+
 export async function pollAllTrackedMovies() {
   // 1. Ensure a monitor job exists for every active request's movie+location
   //    This covers BOTH running and upcoming movies with user alert requests.
@@ -80,7 +94,7 @@ export async function pollAllTrackedMovies() {
         where: { id: job.id },
         data: {
           lastCheckedAt: new Date(),
-          nextCheckAt: nextCheck(),
+          nextCheckAt: nextCheck(intervalForMovie(job.movie.releaseDate)),
           failureCount: ticketsFound ? 0 : job.failureCount,
           lastMessage: ticketsFound
             ? `${fastAdded} new showtimes added via BMS + District + TOI.`
