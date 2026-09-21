@@ -514,9 +514,18 @@ export async function syncMovieShowtimes(
         console.warn(`[showtime-sync] Bright Data search failed for "${query}": HTTP ${res.status} ${await res.text().catch(() => "")}`);
         continue;
       }
-      const data = (await res.json()) as {
-        organic?: { title?: string; link?: string; description?: string }[];
-      };
+      const rawText = await res.text();
+      if (!rawText) {
+        console.warn(`[showtime-sync] Bright Data returned an empty body for "${query}"`);
+        continue;
+      }
+      let data: { organic?: { title?: string; link?: string; description?: string }[] };
+      try {
+        data = JSON.parse(rawText);
+      } catch {
+        console.warn(`[showtime-sync] Bright Data returned non-JSON for "${query}": ${rawText.slice(0, 200)}`);
+        continue;
+      }
       for (const r of (data.organic || []).map((o) => ({ title: o.title, url: o.link, description: o.description }))) {
         if (!r.url) continue;
 
