@@ -97,15 +97,17 @@ export async function scrapeBmsViaJina(
     const raw = await res.text();
 
     // Streaming mode sends the page as a series of growing snapshots as
-    // BookMyShow's lazy-loaded theatre list keeps rendering - each "data:"
-    // event is more complete than the last. The final event is the fully
-    // loaded page (all theatres); non-streaming mode was returning the
-    // very first, mostly-empty snapshot instead.
+    // BookMyShow's lazy-loaded theatre list keeps rendering. We can't just
+    // take the LAST chunk - SSE keep-alive "ping" comments can land after
+    // the real final content and would look like an empty last chunk. Since
+    // content only grows as the page renders, the LONGEST chunk is the
+    // reliable pick regardless of where pings land in the stream.
     const events = raw
       .split("\n\n")
       .map((e) => e.replace(/^data:\s?/, "").trim())
-      .filter(Boolean);
-    const text = events.length > 0 ? events[events.length - 1] : raw;
+      .filter((e) => e.length > 0 && !e.startsWith(":"));
+    const text =
+      events.length > 0 ? events.reduce((longest, e) => (e.length > longest.length ? e : longest), events[0]) : raw;
     const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
 
     const results: ScrapedShowtime[] = [];
