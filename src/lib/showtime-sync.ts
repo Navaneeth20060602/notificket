@@ -516,10 +516,20 @@ export async function syncMovieShowtimes(
         console.warn(`[showtime-sync] Bright Data search failed for "${query}": HTTP ${res.status} ${await res.text().catch(() => "")}`);
         continue;
       }
-      const rawText = await res.text();
+      let rawText = await res.text();
       if (!rawText) {
-        console.warn(`[showtime-sync] Bright Data returned an empty body for "${query}"`);
-        continue;
+        // One quick retry - empty 200s from Bright Data are usually transient.
+        const retryRes = await fetch("https://api.brightdata.com/request", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ zone: process.env.BRIGHTDATA_ZONE, url: googleUrl, format: "raw", data_format: "parsed_light" }),
+          cache: "no-store",
+        });
+        rawText = retryRes.ok ? await retryRes.text() : "";
+        if (!rawText) {
+          console.warn(`[showtime-sync] Bright Data returned an empty body twice for "${query}" (giving up)`);
+          continue;
+        }
       }
       let data: { organic?: { title?: string; link?: string; description?: string }[] };
       try {
