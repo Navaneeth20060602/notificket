@@ -471,8 +471,9 @@ export async function syncMovieShowtimes(
   }
 
   const key = process.env.SERP_SEARCH_API_KEY || DEFAULT_SERP_KEY;
+  // Use targeted queries: one per major source (BookMyShow, District) plus language-specific.
+  // Avoids redundant generic "show time" queries that trigger rate limits unnecessarily.
   const queries = [
-    `${movieTitle} movie show time in ${CITY}`,
     `${movieTitle} Telugu movie BookMyShow ${CITY}`,
     `${movieTitle} movie District ${CITY}`,
     ...(movieLanguage ? [`${movieTitle} ${movieLanguage} movie showtimes ${CITY}`] : []),
@@ -489,11 +490,11 @@ export async function syncMovieShowtimes(
   const dd = String(today.getDate()).padStart(2, "0");
   const dateCompact = `${yyyy}${mm}${dd}`;
 
-  // Helper to add small gaps between SERP calls, avoiding Bright Data's burst throttle
+  // Helper to add gaps between SERP calls, avoiding Bright Data's 15s cooldown throttle
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
   for (const [queryIndex, query] of queries.entries()) {
-    if (queryIndex > 0) await sleep(1500);
+    if (queryIndex > 0) await sleep(5000);
     const params = new URLSearchParams({
       query,
       location: `${CITY}, Telangana, India`,
