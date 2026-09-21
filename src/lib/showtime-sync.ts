@@ -489,7 +489,11 @@ export async function syncMovieShowtimes(
   const dd = String(today.getDate()).padStart(2, "0");
   const dateCompact = `${yyyy}${mm}${dd}`;
 
-  for (const query of queries) {
+  // Helper to add small gaps between SERP calls, avoiding Bright Data's burst throttle
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  for (const [queryIndex, query] of queries.entries()) {
+    if (queryIndex > 0) await sleep(1500);
     const params = new URLSearchParams({
       query,
       location: `${CITY}, Telangana, India`,
