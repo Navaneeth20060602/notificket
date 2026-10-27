@@ -119,14 +119,18 @@ export async function matchShowtimeAgainstRequests(showtimeId: string) {
       },
     });
 
-    const emailResult = await sendAlertEmail(
-      req.user.email,
-      `Tickets live: ${showtime.movie.title}`,
-      message
-    );
+    try {
+      const emailResult = await sendAlertEmail(
+        req.user.email,
+        `Tickets live: ${showtime.movie.title}`,
+        message
+      );
 
-    if (emailResult.sent) {
-      await prisma.notification.update({ where: { id: notification.id }, data: { emailSent: true } });
+      if (emailResult.sent) {
+        await prisma.notification.update({ where: { id: notification.id }, data: { emailSent: true } });
+      }
+    } catch (emailErr) {
+      console.warn("[matching] ticket-alert email failed:", emailErr);
     }
 
     await prisma.request.update({ where: { id: req.id }, data: { status: "COMPLETED" } });

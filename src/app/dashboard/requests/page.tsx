@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Navbar from "@/components/Navbar";
 import { formatDate, toInputDate, todayInputDate, maxFutureInputDate } from "@/lib/date";
-import { isPreReleaseWindowOpen } from "@/lib/pre-release";
 
 export default function RequestsPage() {
   const router = useRouter();

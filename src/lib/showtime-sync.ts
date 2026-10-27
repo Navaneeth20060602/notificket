@@ -495,12 +495,6 @@ export async function syncMovieShowtimes(
 
   for (const [queryIndex, query] of queries.entries()) {
     if (queryIndex > 0) await sleep(5000);
-    const params = new URLSearchParams({
-      query,
-      location: `${CITY}, Telangana, India`,
-      gl: "in",
-      hl: "en",
-    });
     try {
       const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&hl=en&gl=in`;
       const res = await fetch("https://api.brightdata.com/request", {

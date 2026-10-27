@@ -3,7 +3,16 @@ import bcrypt from "bcryptjs";
 import { cookies } from "next/headers";
 import { prisma } from "./db";
 
-const SECRET = process.env.JWT_SECRET || "dev-secret-change-me";
+const DEVELOPMENT_SECRET = "dev-secret-change-me";
+
+function getSessionSecret() {
+  const secret = process.env.JWT_SECRET;
+  if (secret && secret.length >= 32) return secret;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("JWT_SECRET must be set to at least 32 characters in production.");
+  }
+  return DEVELOPMENT_SECRET;
+}
 const COOKIE_NAME = "session";
 
 export type SessionUser = {
@@ -22,11 +31,12 @@ export async function verifyPassword(password: string, hash: string) {
 }
 
 export function signSession(user: SessionUser) {
-  return jwt.sign(user, SECRET, { expiresIn: "30d" });
+  return jwt.sign(user, getSessionSecret(), { expiresIn: "30d" });
 }
 
-export function setSessionCookie(token: string) {
-  cookies().set(COOKIE_NAME, token, {
+export async function setSessionCookie(token: string) {
+  const cookieStore = await cookies();
+  cookieStore.set(COOKIE_NAME, token, {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
@@ -35,17 +45,19 @@ export function setSessionCookie(token: string) {
   });
 }
 
-export function clearSessionCookie() {
-  cookies().delete(COOKIE_NAME);
+export async function clearSessionCookie() {
+  const cookieStore = await cookies();
+  cookieStore.delete(COOKIE_NAME);
 }
 
 // Reads the session cookie and returns the logged-in user, or null.
 // Use this in Server Components / Route Handlers to check who's logged in.
 export async function getSession(): Promise<SessionUser | null> {
-  const token = cookies().get(COOKIE_NAME)?.value;
+  const cookieStore = await cookies();
+  const token = cookieStore.get(COOKIE_NAME)?.value;
   if (!token) return null;
   try {
-    return jwt.verify(token, SECRET) as SessionUser;
+    return jwt.verify(token, getSessionSecret()) as SessionUser;
   } catch {
     return null;
   }

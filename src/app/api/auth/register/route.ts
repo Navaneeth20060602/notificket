@@ -15,7 +15,9 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
   }
-  const { name, email, password } = parsed.data;
+  const { password } = parsed.data;
+  const name = parsed.data.name.trim();
+  const email = parsed.data.email.trim().toLowerCase();
 
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) {
@@ -33,7 +35,7 @@ export async function POST(req: NextRequest) {
   });
 
   const token = signSession({ id: user.id, email: user.email, name: user.name, role: user.role as "USER" | "ADMIN" });
-  setSessionCookie(token);
+  await setSessionCookie(token);
 
   return NextResponse.json({ id: user.id, name: user.name, email: user.email, role: user.role });
 }

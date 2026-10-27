@@ -1,129 +1,112 @@
-# Notificket - movie ticket release alert app
+# Notificket
 
-A starter build of the app we planned: users save "alert me when tickets for
-this movie open at this theatre/time/format/price" requests, and an admin
-manages the movie/theatre/location/format catalog.
+Notificket helps moviegoers track movie ticket availability. Users can request alerts for a movie, location, theatre, date, time range, format, and price. When a matching showtime is added, the app records a notification and can send an email.
 
-## What's real vs. what's a placeholder
+This repository contains a Next.js app, Prisma database schema, and an optional unpacked Chrome/Brave extension for capturing showtimes visible in a browser tab.
 
-**Fully working today:**
-- Register / log in (first account you create automatically becomes admin)
-- Light/dark mode toggle (top-right of the navbar), remembered across visits
-- Landing page with an about-us intro and a multi-language auto-scrolling quote wall
-- Browse "Active" (running) and "Upcoming" movies, search, filter by language
-- View showtimes for a running movie
-- Save an alert request for an upcoming movie (theatre, exact date, time range, format, price) - dates are validated so you can't pick something in the past
-- View / fully edit (all fields, not just a few) / cancel your own requests
-- Admin: add location / theatre / format / movie (blocks duplicates), fix wrong movie info
-- Admin: view every user's requests (read-only, can't edit/respond - as you asked)
-- The actual alert pipeline: when a showtime is added, everyone with a
-  matching active request gets a Notification row + an email attempt
-- All dates shown as DD/MM/YYYY consistently throughout the app
+## Features
 
-**Placeholder / stubbed (see the comments in the code for why):**
-- `src/worker/poll.ts` - this is where automatic polling of BookMyShow/District
-  would live. It's not connected to the real sites yet (see our earlier
-  conversation about why that's fragile and needs to be built + tested from
-  your own machine). For now, the admin dashboard has a **"Simulate a ticket
-  release"** form that creates a real Showtime row and runs the exact same
-  notification logic the real poller would - so you can test the whole alert
-  flow today.
-- Landing page quotes are placeholder text, not real movie dialogue (that's
-  copyrighted - add your own via `npm run db:studio` once you've picked ones
-  you're comfortable using).
-- Emails: if you don't set SMTP credentials in `.env`, alerts are just logged
-  to your terminal instead of actually sent - so nothing breaks with zero
-  setup. Add real SMTP creds later (e.g. a free Resend.com account) to send
-  real emails.
-- Location auto-detect asks for browser permission but doesn't yet map your
-  coordinates to a city (that needs a geocoding API) - so pick your city from
-  the dropdown for now.
+- Register, log in, reset passwords, and choose light or dark theme
+- Browse and filter running and upcoming movies
+- Create, edit, and cancel ticket alert requests
+- Admin pages for managing movies, theatres, locations, formats, showtimes, and feedback
+- Match showtimes to active requests and create in-app notifications
+- Optional email delivery through Brevo
+- Optional browser extension for capturing visible showtimes
 
-## Browser-assisted ticket detection
+## Project status
 
-`extension/` contains an unpacked Chrome/Brave extension for portfolio and
-local use. It does not automate ticketing sites or circumvent their controls.
-Instead, after you open a movie page normally, it captures the showtimes you
-can see and sends your verified selections to Notificket. New showtimes invoke
-the same request-matching and email-alert path as any other source.
+This is a portfolio project, not a production ticketing integration. Automatic polling is not connected to BookMyShow or District. Monitor and catalogue-import flows depend on configured services and credentials. The browser extension reads showtimes visible on a page you open yourself; it does not book tickets or bypass site controls. Review captured details before submitting them.
 
-1. Add a random `SHOWTIME_INGEST_KEY` to `.env` (see `.env.example`).
-2. In Chrome/Brave, open `chrome://extensions`, enable **Developer mode**, then
-   click **Load unpacked** and select the `extension` folder in this project.
-3. Open a BookMyShow/District movie page normally, open the extension, check
-   the movie, theatre, date, format and selected times, then save.
-4. The extension must use the same `SHOWTIME_INGEST_KEY` as `.env`; it is
-   stored only in that browser profile. Do not publish the extension with a key.
+The sample database seed adds cities, theatres, formats, movies, showtimes, and original sample quotes. It does not create a user account. On a fresh database, the first registered account becomes an administrator.
 
-## Setup (step by step)
+## Requirements
 
-You'll need [Node.js](https://nodejs.org) installed (version 18 or higher).
+- Node.js 20 or newer
+- npm
+- SQLite for local development
 
-1. Unzip this project and open a terminal inside the folder.
+## Run locally
 
-2. Install dependencies:
-   ```
-   npm install
-   ```
+1. Clone the repository and enter the project directory:
 
-3. Create your `.env` file from the example:
-   ```
+   ~~~sh
+   git clone https://github.com/Navaneeth20060602/notificket.git
+   cd notificket
+   ~~~
+
+2. Install dependencies and create a local environment file:
+
+   ~~~sh
+   npm ci
    cp .env.example .env
-   ```
-   (On Windows, just copy `.env.example` and rename the copy to `.env`.)
-   You don't need to change anything in it to get started - it uses a local
-   SQLite database file, no separate database server needed.
+   ~~~
 
-4. Create the database tables:
-   ```
+   In Windows PowerShell, use Copy-Item .env.example .env if needed.
+
+3. Apply the checked-in database migrations and generate Prisma Client:
+
+   ~~~sh
    npm run db:migrate
-   ```
-   This also generates the Prisma Client automatically. If you ever see an
-   error like `@prisma/client did not initialize yet`, just run:
-   ```
-   npx prisma generate
-   ```
-   and restart `npm run dev`.
+   ~~~
 
-5. Add sample data (a demo admin login, a few cities/theatres/formats, and
-   two sample movies) so the app isn't empty:
-   ```
+4. Optionally add sample catalogue data, then start the app:
+
+   ~~~sh
    npm run db:seed
-   ```
-
-6. Start the app:
-   ```
    npm run dev
-   ```
+   ~~~
 
-7. Open [http://localhost:3000](http://localhost:3000)
+5. Open http://localhost:3000 and register. The first account on an empty database receives the administrator role; later registrations are regular users.
 
-**Demo login:** `admin@example.com` / `password123` (this account is an
-admin - use the Admin link in the navbar). Or just register your own account
-- remember, the very first account ever created on a fresh database
-automatically becomes admin.
+## Environment variables
 
-## Trying the full alert flow end to end
+Use the checked-in .env.example for local development. Keep real credentials in .env or your deployment provider's secret settings; never commit them.
 
-1. Log in as a normal (non-admin) user, or register a second account.
-2. Go to an Upcoming movie, save an alert request (e.g. any theatre, no date limit).
-3. Log in as admin (`admin@example.com`).
-4. Go to Admin -> "Simulate a ticket release", pick that movie/theatre/format/date/time, submit.
-5. Log back in as the user and check "My requests" - it should have moved to
-   Completed, with the notification message shown. Check your terminal too -
-   you'll see the "email" logged there.
+| Variable | Purpose |
+| --- | --- |
+| DATABASE_URL | Prisma database connection; the example uses a local SQLite file. |
+| JWT_SECRET | Session signing secret. Production requires a random value of at least 32 characters; it may be blank for local development. |
+| TMDB_API_KEY / TMDB_READ_ACCESS_TOKEN | Optional TMDB credentials for catalogue imports. |
+| SERP_SEARCH_API_KEY | Optional Bright Data API token for the Hyderabad showtime search flow. |
+| BRIGHTDATA_ZONE | Bright Data zone used by that search flow. |
+| SHOWTIME_INGEST_KEY | Shared secret required by the browser extension ingestion endpoint. |
+| MONITOR_INTERVAL_MINUTES / MONITOR_MAX_JOBS_PER_CYCLE | Optional monitor worker settings. |
+| BREVO_API_KEY | Optional Brevo API key for alert and password reset emails. Without it, email content is logged locally. |
+| SMTP_FROM | Verified sender email configured in Brevo. Delivery uses Brevo's HTTPS API, not SMTP; this variable name is retained for compatibility. |
+
+Generate a random secret with Node.js:
+
+~~~sh
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+~~~
+
+## Browser extension
+
+1. Set SHOWTIME_INGEST_KEY in the server environment and restart the app.
+2. In Chrome or Brave, open chrome://extensions, enable **Developer mode**, and choose **Load unpacked**. Select this repository's extension folder.
+3. Open a supported BookMyShow or District showtime page normally. Open the extension and review the detected movie, theatre, date, format, and times.
+4. Enter the app URL and the same ingestion key, then submit the selected showtimes.
+
+Treat the ingestion key like a password. Do not share it or publish a configured browser profile. The extension defaults to http://localhost:3000.
 
 ## Useful commands
 
-- `npm run db:studio` - opens a visual editor for your database (add quotes,
-  inspect data, etc.) in the browser
-- `npm run dev` - run the app locally
-- `npm run build` - production build (checks for errors)
+| Command | Description |
+| --- | --- |
+| npm run dev | Start the development server |
+| npm run build | Build the Next.js app |
+| npm run start | Run the production server after a build |
+| npx prisma migrate dev | Apply local development migrations |
+| npm run db:generate | Generate Prisma Client |
+| npm run db:seed | Add sample catalogue and quote data |
+| npm run db:studio | Open Prisma Studio |
+| npm run monitor | Start the monitor worker |
 
-## Next steps (tell me what you want to tackle first)
+## Deployment notes
 
-- Wire up real polling against BookMyShow/District (`src/worker/poll.ts`)
-- Real email sending (just needs SMTP credentials in `.env`)
-- Switch from SQLite to PostgreSQL for production
-- Deploy it somewhere (Railway/Render/VPS)
-- Replace placeholder quotes with real ones + a nicer visual design pass
+The included Dockerfile and railway.toml are configured for Railway with PostgreSQL. Configure the database URL and required secrets in Railway before deployment. Local development uses SQLite; the Docker build generates a PostgreSQL Prisma client. Review the deployment configuration and database migration strategy before using it with real users or data.
+
+## License
+
+No license file is included. Public visibility alone does not grant permission to reuse, modify, or distribute this code. Add a license that matches your intent before inviting contributions or reuse.

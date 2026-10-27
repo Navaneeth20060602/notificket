@@ -10,7 +10,7 @@ async function assertOwnership(userId: string, requestId: string) {
 }
 
 // PATCH: modify an existing ACTIVE request (theatre, date/time range, format, price)
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   let user;
   try {
     user = await requireUser();
@@ -18,7 +18,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return res as NextResponse;
   }
 
-  const owned = await assertOwnership(user.id, params.id);
+  const { id } = await params;
+  const owned = await assertOwnership(user.id, id);
   if (!owned) return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (owned.status !== "ACTIVE") {
     return NextResponse.json({ error: "Only active requests can be modified" }, { status: 400 });
@@ -56,7 +57,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     }
 
     const updated = await prisma.request.update({
-      where: { id: params.id },
+      where: { id },
       data: {
         locationId,
         theatreId: uniqueTheatreIds[0],
@@ -90,7 +91,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
 
   const updated = await prisma.request.update({
-    where: { id: params.id },
+    where: { id },
     data: {
       // "" from a cleared dropdown means "any" -> store as null, not the empty string
       locationId: locationId !== undefined ? (locationId || null) : owned.locationId,
@@ -107,7 +108,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 }
 
 // DELETE: cancel a request
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   let user;
   try {
     user = await requireUser();
@@ -115,9 +116,10 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
     return res as NextResponse;
   }
 
-  const owned = await assertOwnership(user.id, params.id);
+  const { id } = await params;
+  const owned = await assertOwnership(user.id, id);
   if (!owned) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  await prisma.request.update({ where: { id: params.id }, data: { status: "CANCELLED" } });
+  await prisma.request.update({ where: { id }, data: { status: "CANCELLED" } });
   return NextResponse.json({ ok: true });
 }

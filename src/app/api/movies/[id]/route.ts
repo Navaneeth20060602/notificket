@@ -11,9 +11,10 @@ export const dynamic = "force-dynamic";
 const lastAutoSync = new Map<string, number>();
 const AUTO_SYNC_COOLDOWN_MS = 10 * 60_000;
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   let movie = await prisma.movie.findUnique({
-    where: { id: params.id },
+    where: { id },
     include: {
       showtimes: {
         include: { theatre: { include: { location: true } }, format: true },
@@ -36,7 +37,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       const added = await syncMovieShowtimes(movie.id, movieTitle, movie.language);
       if (added > 0 || movie.showtimes.length === 0) {
         const refreshed = await prisma.movie.findUnique({
-          where: { id: params.id },
+          where: { id },
           include: {
             showtimes: {
               include: { theatre: { include: { location: true } }, format: true },
@@ -54,17 +55,18 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   return NextResponse.json({ movie });
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     await requireAdmin();
   } catch (res) {
     return res as NextResponse;
   }
+  const { id } = await params;
   const body = await req.json();
   const { title, language, status, releaseDate, posterUrl } = body;
 
   const movie = await prisma.movie.update({
-    where: { id: params.id },
+    where: { id },
     data: {
       ...(title !== undefined && { title }),
       ...(language !== undefined && { language }),

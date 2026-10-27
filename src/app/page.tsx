@@ -61,7 +61,7 @@ export default async function LandingPage() {
             <p className="font-medium mb-2">About</p>
             <p className="text-sm text-muted leading-relaxed">
               Notificket tracks the movies, theatres and formats you care
-              about and watches for new tickets to open, so you don't have
+              about and watches for new tickets to open, so you don&apos;t have
               to keep checking yourself.
             </p>
           </div>
