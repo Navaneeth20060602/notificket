@@ -103,8 +103,6 @@ Treat the ingestion key like a password. Do not share it or publish a configured
 | npm run db:studio | Open Prisma Studio |
 | npm run monitor | Start the monitor worker |
 
-## Deployment notes
 
-The included Dockerfile and railway.toml are configured for Railway with PostgreSQL. Configure the database URL and required secrets in Railway before deployment. Local development uses SQLite; the Docker build generates a PostgreSQL Prisma client. Review the deployment configuration and database migration strategy before using it with real users or data.
 
 
