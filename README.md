@@ -16,9 +16,9 @@ This repository contains a Next.js app, Prisma database schema, and an optional 
 
 ## Project status
 
-This is a portfolio project, not a production ticketing integration. Automatic polling is not connected to BookMyShow or District. Monitor and catalogue-import flows depend on configured services and credentials. The browser extension reads showtimes visible on a page you open yourself; it does not book tickets or bypass site controls. Review captured details before submitting them.
+ The browser extension reads showtimes visible on a page you open yourself; it does not book tickets or bypass site controls. Review captured details before submitting them.
 
-The sample database seed adds cities, theatres, formats, movies, showtimes, and original sample quotes. It does not create a user account. On a fresh database, the first registered account becomes an administrator.
+
 
 ## Requirements
 
